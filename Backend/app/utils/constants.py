@@ -59,3 +59,18 @@ LABEL_NAMES = {
     0: "correct",
     1: "incorrect",
 }
+
+# ── Exercise registry (mirrors config.EXERCISES) ────────────────────
+EXERCISE_NAMES = {
+    0: "Shoulder Flexion",
+    1: "Shoulder Abduction",
+    2: "Shoulder Forward Extension",
+    3: "Elbow Flexion",
+    4: "Shoulder Horizontal Abduction",
+    5: "Shoulder Rotation",
+    6: "Forearm Pronation/Supination",
+    7: "Wrist Flexion/Extension",
+    8: "Hand to Mouth",
+}
+
+NUM_EXERCISES = len(EXERCISE_NAMES)

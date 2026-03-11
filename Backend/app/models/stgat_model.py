@@ -171,6 +171,10 @@ class STGATModel(BaseMovementModel):
             self.device = torch.device(settings.DEVICE)
         self.optimizer = None
         self.criterion = nn.CrossEntropyLoss()
+        self.grad_clip_norm: float = settings.GRAD_CLIP_NORM
+        # AMP (only meaningful on CUDA)
+        self.use_amp: bool = settings.USE_AMP and self.device.type == "cuda"
+        self.scaler = torch.amp.GradScaler("cuda", enabled=self.use_amp)
 
     def build(self, **kwargs) -> None:
         self.model = STGATNetwork(
@@ -187,6 +191,7 @@ class STGATModel(BaseMovementModel):
         self.optimizer = torch.optim.Adam(
             self.model.parameters(),
             lr=kwargs.get("lr", settings.LEARNING_RATE),
+            weight_decay=kwargs.get("weight_decay", settings.WEIGHT_DECAY),
         )
 
     def load_weights(self, path: str) -> None:
@@ -231,14 +236,23 @@ class STGATModel(BaseMovementModel):
     def train_step(self, batch: Any) -> Dict[str, float]:
         self.model.train()
         x, y = batch
-        x = x.to(self.device)
-        y = y.to(self.device)
+        x = x.to(self.device, non_blocking=True)
+        y = y.to(self.device, non_blocking=True)
 
-        self.optimizer.zero_grad()
-        logits = self.model(x)
-        loss = self.criterion(logits, y)
-        loss.backward()
-        self.optimizer.step()
+        self.optimizer.zero_grad(set_to_none=True)
+
+        with torch.amp.autocast(self.device.type, enabled=self.use_amp):
+            logits = self.model(x)
+            loss = self.criterion(logits, y)
+
+        self.scaler.scale(loss).backward()
+
+        if self.grad_clip_norm > 0:
+            self.scaler.unscale_(self.optimizer)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip_norm)
+
+        self.scaler.step(self.optimizer)
+        self.scaler.update()
 
         acc = (logits.argmax(dim=-1) == y).float().mean().item()
         return {"loss": loss.item(), "accuracy": acc}
@@ -246,10 +260,10 @@ class STGATModel(BaseMovementModel):
     def eval_step(self, batch: Any) -> Dict[str, float]:
         self.model.eval()
         x, y = batch
-        x = x.to(self.device)
-        y = y.to(self.device)
+        x = x.to(self.device, non_blocking=True)
+        y = y.to(self.device, non_blocking=True)
 
-        with torch.no_grad():
+        with torch.no_grad(), torch.amp.autocast(self.device.type, enabled=self.use_amp):
             logits = self.model(x)
             loss = self.criterion(logits, y)
             acc = (logits.argmax(dim=-1) == y).float().mean().item()
