@@ -124,3 +124,9 @@ Backend/weights/*.pt
 !Backend/weights/.gitkeep
 Backend/__pycache__/
 Backend/.pytest_cache/
+
+
+
+frontendWeb/KinetoCheckWeb/bin/
+
+frontendWeb/KinetoCheckWeb/obj/
