@@ -3,7 +3,7 @@ Convert IntelliRehab data using the EXACT same method as the original project.
 Uses pandas.read_csv() exactly as in intellirehab_helper.py
 
 Usage:
-    python tools/convert_pandas.py --input ../SkeletonData/RawData --output ../SkeletonData/Simplified
+    python tools/convert_pandas.py --input ../Datasets/SkeletonData/RawData --output ../Datasets/SkeletonData/Simplified
 """
 import os
 import sys

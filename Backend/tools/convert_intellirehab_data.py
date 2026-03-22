@@ -6,7 +6,7 @@ Filename format: SubjectID_DateID_GestureLabel_RepetitionNumber_CorrectLabel_Pos
 - CorrectLabel: 1 = correct, 2 = incorrect (label-1 in code, so 0 = correct, 1 = incorrect)
 
 Usage:
-    python tools/convert_intellirehab_data.py --input ../SkeletonData/RawData --output ../SkeletonData/Simplified
+    python tools/convert_intellirehab_data.py --input ../Datasets/SkeletonData/RawData --output ../Datasets/SkeletonData/Simplified
 """
 import os
 import sys
@@ -263,13 +263,13 @@ def main():
             epilog="""
 Examples:
   # Basic conversion (skip incorrect as in original code)
-  python tools/convert_intellirehab_data.py --input ../SkeletonData/RawData --output ../SkeletonData/Simplified
+  python tools/convert_intellirehab_data.py --input ../Datasets/SkeletonData/RawData --output ../Datasets/SkeletonData/Simplified
   
   # Include all data (both correct and incorrect)
-  python tools/convert_intellirehab_data.py --input ../SkeletonData/RawData --output ../SkeletonData/Simplified --no-skip-incorrect
+  python tools/convert_intellirehab_data.py --input ../Datasets/SkeletonData/RawData --output ../Datasets/SkeletonData/Simplified --no-skip-incorrect
   
   # Include all data + downsample to balance classes
-  python tools/convert_intellirehab_data.py --input ../SkeletonData/RawData --output ../SkeletonData/Simplified --no-skip-incorrect --downsample
+  python tools/convert_intellirehab_data.py --input ../Datasets/SkeletonData/RawData --output ../Datasets/SkeletonData/Simplified --no-skip-incorrect --downsample
         """
         )
         parser.add_argument("--input", required=True, help="Input directory with .txt files")

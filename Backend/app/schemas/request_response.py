@@ -11,6 +11,7 @@ class KeypointSequenceRequest(BaseModel):
     """Full sequence of frames with keypoints."""
     frames: List[KeypointFrame]
     exercise_id: int
+    dataset: str = "intellirehab"
     model_name: Optional[str] = None
 
 
@@ -19,6 +20,7 @@ class PredictionResponse(BaseModel):
     confidence: float
     exercise_id: Optional[int] = None
     exercise_name: Optional[str] = None
+    dataset: Optional[str] = None
     details: Optional[Dict[str, Any]] = None
     model_info: Optional[Dict[str, Any]] = None
     problematic_joints: Optional[List[str]] = None
@@ -26,6 +28,7 @@ class PredictionResponse(BaseModel):
 
 
 class ExerciseInfo(BaseModel):
+    dataset: str
     id: int
     name: str
     has_weights: bool = False

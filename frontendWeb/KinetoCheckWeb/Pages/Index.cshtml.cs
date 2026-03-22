@@ -33,7 +33,32 @@ public class IndexModel : PageModel
     public bool HasAnnotatedVideo => !string.IsNullOrEmpty(VideoId) && _videoCache.ContainsKey(VideoId);
 
     [BindProperty]
-    public int SelectedExerciseId { get; set; }
+    public string SelectedExerciseKey { get; set; } = "";
+
+    private bool TryParseSelectedExercise(out string dataset, out int exerciseId)
+    {
+        dataset = "";
+        exerciseId = -1;
+
+        if (string.IsNullOrWhiteSpace(SelectedExerciseKey))
+        {
+            return false;
+        }
+
+        var parts = SelectedExerciseKey.Split(':', 2, StringSplitOptions.TrimEntries);
+        if (parts.Length != 2)
+        {
+            return false;
+        }
+
+        if (!int.TryParse(parts[1], out exerciseId))
+        {
+            return false;
+        }
+
+        dataset = parts[0].ToLowerInvariant();
+        return dataset is "intellirehab" or "uiprmd";
+    }
 
     public async Task OnGetAsync()
     {
@@ -50,10 +75,16 @@ public class IndexModel : PageModel
             return Page();
         }
 
+        if (!TryParseSelectedExercise(out var dataset, out var exerciseId))
+        {
+            ErrorMessage = "Please select an exercise from the list.";
+            return Page();
+        }
+
         try
         {
             using var stream = videoFile.OpenReadStream();
-            Prediction = await _api.PredictVideoAsync(stream, videoFile.FileName, SelectedExerciseId);
+            Prediction = await _api.PredictVideoAsync(stream, videoFile.FileName, exerciseId, dataset);
         }
         catch (Exception ex)
         {
@@ -74,6 +105,12 @@ public class IndexModel : PageModel
             return Page();
         }
 
+        if (!TryParseSelectedExercise(out var dataset, out var exerciseId))
+        {
+            ErrorMessage = "Please select an exercise from the list.";
+            return Page();
+        }
+
         try
         {
             // Read video file into byte array so we can use it for both API calls
@@ -85,7 +122,7 @@ public class IndexModel : PageModel
             // Get annotated video (with separate stream)
             using (var annotatedStream = new MemoryStream(videoBytes))
             {
-                AnnotatedVideo = await _api.PredictVideoAnnotatedAsync(annotatedStream, videoFile.FileName, SelectedExerciseId);
+                AnnotatedVideo = await _api.PredictVideoAnnotatedAsync(annotatedStream, videoFile.FileName, exerciseId, dataset);
                 _logger.LogInformation($"AnnotatedVideo received: {AnnotatedVideo?.VideoData?.Length ?? 0} bytes");
                 
                 // Store video in cache with unique ID
@@ -106,7 +143,7 @@ public class IndexModel : PageModel
             // Also get full prediction details with JSON endpoint for deviations (with separate stream)
             using (var predictionStream = new MemoryStream(videoBytes))
             {
-                Prediction = await _api.PredictVideoAsync(predictionStream, videoFile.FileName, SelectedExerciseId);
+                Prediction = await _api.PredictVideoAsync(predictionStream, videoFile.FileName, exerciseId, dataset);
             }
         }
         catch (Exception ex)

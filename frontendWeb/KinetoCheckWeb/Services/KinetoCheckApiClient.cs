@@ -25,13 +25,14 @@ public class KinetoCheckApiClient
 
     public record HealthResponse(string Status, string Version);
 
-    public record ExerciseInfo(int Id, string Name, bool HasWeights);
+    public record ExerciseInfo(string Dataset, int Id, string Name, bool HasWeights);
 
     public record PredictionResponse(
         string Label,
         float Confidence,
         int? ExerciseId,
         string? ExerciseName,
+        string? Dataset,
         Dictionary<string, object>? Details,
         Dictionary<string, object>? ModelInfo,
         List<string>? ProblematicJoints,
@@ -66,7 +67,7 @@ public class KinetoCheckApiClient
     }
 
     public async Task<PredictionResponse?> PredictVideoAsync(
-        Stream fileStream, string fileName, int exerciseId)
+        Stream fileStream, string fileName, int exerciseId, string dataset)
     {
         using var content = new MultipartFormDataContent();
 
@@ -75,6 +76,7 @@ public class KinetoCheckApiClient
         content.Add(streamContent, "file", fileName);
 
         content.Add(new StringContent(exerciseId.ToString()), "exercise_id");
+        content.Add(new StringContent(dataset), "dataset");
 
         var resp = await _http.PostAsync("/api/v1/predict/video", content);
         resp.EnsureSuccessStatusCode();
@@ -88,7 +90,7 @@ public class KinetoCheckApiClient
         List<string>? ProblematicJoints);
 
     public async Task<AnnotatedVideoResult?> PredictVideoAnnotatedAsync(
-        Stream fileStream, string fileName, int exerciseId)
+        Stream fileStream, string fileName, int exerciseId, string dataset)
     {
         using var content = new MultipartFormDataContent();
 
@@ -97,6 +99,7 @@ public class KinetoCheckApiClient
         content.Add(streamContent, "file", fileName);
 
         content.Add(new StringContent(exerciseId.ToString()), "exercise_id");
+        content.Add(new StringContent(dataset), "dataset");
 
         var resp = await _http.PostAsync("/api/v1/predict/video_annotated", content);
         resp.EnsureSuccessStatusCode();

@@ -35,14 +35,18 @@
                 <form method="post" enctype="multipart/form-data">
                     <div class="mb-3">
                         <label class="form-label" for="exerciseSelect">Exercise Type</label>
-                        <select class="form-select" id="exerciseSelect" name="SelectedExerciseId" required>
+                        <select class="form-select" id="exerciseSelect" name="SelectedExerciseKey" required>
                             <option value="" disabled selected>-- Select an exercise --</option>
                             @foreach (var ex in Model.Exercises)
                             {
-                                <option value="@ex.Id"
-                                        selected="@(ex.Id == Model.SelectedExerciseId)"
+                                var key = $"{ex.Dataset}:{ex.Id}";
+                                var datasetLabel = ex.Dataset.Equals("uiprmd", StringComparison.OrdinalIgnoreCase)
+                                    ? "UI-PRMD"
+                                    : "IntelliRehab";
+                                <option value="@key"
+                                        selected="@(key == Model.SelectedExerciseKey)"
                                         title="@(ex.HasWeights ? "Trained model available" : "No trained model yet")">
-                                    @ex.Name @(ex.HasWeights ? "" : "(no weights)")
+                                    [@datasetLabel] @ex.Name @(ex.HasWeights ? "" : "(no weights)")
                                 </option>
                             }
                         </select>
@@ -79,7 +83,13 @@
                     <p class="display-6">@($"{Model.Prediction.Confidence * 100:F1}%") confidence</p>
                     @if (!string.IsNullOrEmpty(Model.Prediction.ExerciseName))
                     {
-                        <p class="text-muted mt-2">Exercise: <strong>@Model.Prediction.ExerciseName</strong></p>
+                        <p class="text-muted mt-2">
+                            Exercise: <strong>@Model.Prediction.ExerciseName</strong>
+                            @if (!string.IsNullOrEmpty(Model.Prediction.Dataset))
+                            {
+                                <span class="badge bg-secondary ms-2">@Model.Prediction.Dataset</span>
+                            }
+                        </p>
                     }
                 </div>
 

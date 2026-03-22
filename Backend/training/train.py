@@ -24,6 +24,7 @@ import os
 import sys
 import time
 
+
 import torch
 from torch.utils.data import DataLoader, random_split
 
@@ -35,7 +36,6 @@ except ImportError:  # graceful fallback
 # Ensure the Backend package root is importable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.models.model_factory import ModelFactory
 from training.callbacks import (
     CallbackRunner,
     EarlyStopping,
@@ -43,7 +43,7 @@ from training.callbacks import (
     ReduceLROnPlateauCallback,
     TrainingMetrics,
 )
-from training.dataset import SkeletonDataset
+from training.training_factory import AbstractTrainingFactory, get_training_factory
 from config import settings
 
 
@@ -56,18 +56,38 @@ def _make_bar(iterable, total, desc, unit="batch", disable=False):
 
 # ── per-exercise training loop ───────────────────────────────────────
 
-def train_exercise(exercise_id: int, model_name: str) -> float:
+def train_exercise(
+    exercise_id: int,
+    model_name: str,
+    factory: AbstractTrainingFactory | None = None,
+    dataset_key: str = "intellirehab",
+    data_dir: str | None = None,
+) -> float:
     """
     Train a single model for *one* exercise.
-    Returns the best validation accuracy achieved.
+
+    Args:
+        exercise_id: Which exercise to train (0-8 for IntelliRehab).
+        model_name:  Architecture key recognised by ModelFactory.
+        factory:     Training-component factory.  Defaults to
+                     ``IntelliRehabTrainingFactory`` when omitted so that
+                     existing call-sites keep working unchanged.
+
+    Returns:
+        Best validation accuracy achieved.
     """
-    exercise_name = settings.exercise_name(exercise_id)
+    if factory is None:
+        factory = get_training_factory("intellirehab")
+    if data_dir is None:
+        data_dir = settings.data_dir_for(dataset_key)
+
+    exercise_name = settings.exercise_name_for(dataset_key, exercise_id)
     print(f"\n{'═' * 60}")
-    print(f"  Exercise {exercise_id}: {exercise_name}")
+    print(f"  Exercise {exercise_id}: {exercise_name}  [{factory.dataset_name}]")
     print(f"{'═' * 60}")
 
-    # ── dataset ──────────────────────────────────────────────────
-    dataset = SkeletonDataset(settings.DATA_DIR, exercise_id=exercise_id)
+    # ── dataset (created via factory) ─────────────────────────────
+    dataset = factory.create_dataset(data_dir, exercise_id=exercise_id)
     if len(dataset) == 0:
         print(f"  ⚠  No samples for exercise {exercise_id} — skipping.")
         return 0.0
@@ -93,15 +113,18 @@ def train_exercise(exercise_id: int, model_name: str) -> float:
 
     print(f"  Train: {train_size}  Val: {val_size}")
 
-    # ── model ────────────────────────────────────────────────────
-    model = ModelFactory.create(model_name)
-    model.build()
+    # ── model (created via factory) ───────────────────────────────
+    model = factory.create_model(model_name)
+    num_joints = getattr(dataset, "num_joints", factory.num_joints)
+    model.build(num_keypoints=num_joints)
     info = model.get_model_info()
     print(f"  Model : {info}")
+    print(f"  Joints: {num_joints}")
     print(f"  Device: {info.get('device', '?')}   AMP: {getattr(model, 'use_amp', False)}")
 
-    os.makedirs(settings.WEIGHTS_DIR, exist_ok=True)
-    save_path = settings.weights_path_for(model_name, exercise_id)
+    weights_dir = settings.weights_dir_for(dataset_key)
+    os.makedirs(weights_dir, exist_ok=True)
+    save_path = settings.weights_path_for(model_name, exercise_id, dataset=dataset_key)
     print(f"  Weights → {save_path}")
 
     # ── callbacks ────────────────────────────────────────────────
@@ -239,12 +262,37 @@ def main():
         default=None,
         help=f"Model architecture (default: {settings.ACTIVE_MODEL})",
     )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="uiprmd",
+        help="Dataset family: 'uiprmd' (default) or 'intellirehab'.",
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=str,
+        default=None,
+        help="Optional override for dataset root path.",
+    )
     args = parser.parse_args()
 
+    dataset_key = args.dataset.lower()
     model_name = args.model or settings.ACTIVE_MODEL
-    exercise_ids = (
-        args.exercise if args.exercise else sorted(settings.EXERCISES.keys())
-    )
+    factory = get_training_factory(dataset_key)
+    data_dir = args.data_dir or settings.data_dir_for(dataset_key)
+
+    # If exercises are not explicitly specified, use configured IntelliRehab list,
+    # or auto-discover available exercise IDs for other datasets.
+    if args.exercise:
+        exercise_ids = args.exercise
+    elif dataset_key == "intellirehab":
+        exercise_ids = sorted(settings.exercises_for(dataset_key).keys())
+    else:
+        probe = factory.create_dataset(data_dir, exercise_id=None)
+        if hasattr(probe, "exercise_distribution"):
+            exercise_ids = sorted(probe.exercise_distribution().keys())
+        else:
+            exercise_ids = []
 
     # Device banner
     if settings.DEVICE == "auto":
@@ -256,7 +304,9 @@ def main():
         cuda_info = f" ({torch.cuda.get_device_name(0)})"
 
     print(f"Model architecture : {model_name}")
-    print(f"Data directory     : {settings.DATA_DIR}")
+    print(f"Dataset family     : {factory.dataset_name}")
+    print(f"Data directory     : {data_dir}")
+    print(f"Weights directory  : {settings.weights_dir_for(dataset_key)}")
     print(f"Exercises to train : {exercise_ids}")
     print(f"Device             : {device}{cuda_info}")
     print(f"AMP                : {settings.USE_AMP and device == 'cuda'}")
@@ -268,18 +318,28 @@ def main():
     print(f"Early stopping     : patience={settings.EARLY_STOPPING_PATIENCE}")
     print(f"LR scheduler       : ReduceOnPlateau(factor={settings.LR_SCHEDULER_FACTOR}, patience={settings.LR_SCHEDULER_PATIENCE})")
 
-    if not os.path.exists(settings.DATA_DIR):
-        print(f"ERROR: Data directory does not exist: {settings.DATA_DIR}")
+    if not os.path.exists(data_dir):
+        print(f"ERROR: Data directory does not exist: {data_dir}")
         sys.exit(1)
 
     results: dict[int, float] = {}
 
+    if not exercise_ids:
+        print(f"ERROR: No exercises found for dataset '{dataset_key}' in: {data_dir}")
+        sys.exit(1)
+
     try:
         for eid in exercise_ids:
-            if eid not in settings.EXERCISES:
+            if eid not in settings.exercises_for(dataset_key):
                 print(f"WARNING: Unknown exercise_id {eid}, skipping.")
                 continue
-            results[eid] = train_exercise(eid, model_name)
+            results[eid] = train_exercise(
+                eid,
+                model_name,
+                factory=factory,
+                dataset_key=dataset_key,
+                data_dir=data_dir,
+            )
     except KeyboardInterrupt:
         print("\n\nTraining interrupted by user.")
         sys.exit(0)
@@ -289,7 +349,7 @@ def main():
     print("  Training summary")
     print(f"{'═' * 60}")
     for eid, acc in results.items():
-        name = settings.exercise_name(eid)
+        name = settings.exercise_name_for(dataset_key, eid)
         status = f"val_acc={acc:.4f}" if acc > 0 else "SKIPPED (no data)"
         print(f"  [{eid}] {name:35s} {status}")
     print()

@@ -1,9 +1,12 @@
 import os
+import logging
 from typing import Any, Dict
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+logger = logging.getLogger(__name__)
 from torch_geometric.nn import GATConv
 from torch_geometric.data import Data, Batch
 
@@ -27,11 +30,32 @@ KINECT_EDGES = [
     (0, 16), (16, 17), (17, 18), (18, 19),                    # right leg
 ]
 
+# UI-PRMD (17 joints)
+# 0/Pelvis, 1/L5(Lower_Spine), 2/L3(Mid_Spine?), 3/T12, 4/T8, 5/Neck, 6/Head
+# 7/RSh, 8/LSh, 9/RArm, 10/RFore, 11/RHand, 12/LArm, 13/LFore, 14/LHand
+# 15/RLeg, 16/LLeg. (Based on typical Vicon plug-in-Gait or similar, but we need edges valid < 17)
+# For now, let's defined a minimal tree.
+# This assumes 0-indexed joints match Vicon output order.
+# FIXME: This is an approximation.
+UIPRMD_EDGES = [
+    (0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), # Spine up to head
+    (4, 7), (4, 8), # Shoulders attached to upper spine area
+    (7, 9), (9, 10), (10, 11), # Right arm
+    (8, 12), (12, 13), (13, 14), # Left arm
+    (0, 15), (0, 16) # Legs attached to pelvis
+]
+
 
 def build_edge_index(edges, num_nodes: int) -> torch.Tensor:
     """Build a bidirectional edge_index tensor from an edge list."""
-    src = [e[0] for e in edges] + [e[1] for e in edges]
-    dst = [e[1] for e in edges] + [e[0] for e in edges]
+    # Filter edges to ensure they are within num_nodes range
+    valid_edges = [e for e in edges if e[0] < num_nodes and e[1] < num_nodes]
+    
+    if len(valid_edges) < len(edges):
+        logger.warning(f"Filtered {len(edges) - len(valid_edges)} edges out of bounds for num_nodes={num_nodes}")
+        
+    src = [e[0] for e in valid_edges] + [e[1] for e in valid_edges]
+    dst = [e[1] for e in valid_edges] + [e[0] for e in valid_edges]
     # Add self-loops
     src += list(range(num_nodes))
     dst += list(range(num_nodes))
@@ -117,9 +141,14 @@ class STGATNetwork(nn.Module):
         )
 
         # Pre-build edge index
+        if num_keypoints == 17:
+             edges = UIPRMD_EDGES
+        else:
+             edges = KINECT_EDGES
+             
         self.register_buffer(
             "edge_index",
-            build_edge_index(KINECT_EDGES, num_keypoints),
+            build_edge_index(edges, num_keypoints),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -197,8 +226,21 @@ class STGATModel(BaseMovementModel):
     def load_weights(self, path: str) -> None:
         if self.model is None:
             raise RuntimeError("Call build() before loading weights.")
+        
         state = torch.load(path, map_location=self.device)
-        self.model.load_state_dict(state)
+        
+        # Filter out keys with shape mismatches (e.g., edge_index due to different num_keypoints)
+        model_state = self.model.state_dict()
+        filtered_state = {}
+        for k, v in state.items():
+            if k in model_state:
+                if v.shape != model_state[k].shape:
+                    logger.warning(f"Skipping layer {k} due to shape mismatch: checkpoint {v.shape} vs model {model_state[k].shape}")
+                    continue
+            filtered_state[k] = v
+            
+        # Use strict=False to handle missing/unexpected keys after filtering
+        self.model.load_state_dict(filtered_state, strict=False)
         self.model.eval()
 
     def save_weights(self, path: str) -> None:

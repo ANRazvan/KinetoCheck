@@ -76,38 +76,59 @@ KINECT_SKELETON_CONNECTIONS = [
 
 
 class ExplainabilityService:
-    """Analyze movement deviations and generate visual feedback."""
-    
+    """
+    Analyze movement deviations and generate visual feedback.
+
+    Implemented as a **Singleton**: the service caches loaded reference
+    keypoints in ``self.references``; sharing one instance across all
+    requests avoids reloading those ``.npy`` files on every call.
+    """
+
+    _instance: "ExplainabilityService | None" = None
+
+    def __new__(cls, deviation_threshold: float = 0.15) -> "ExplainabilityService":
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
     def __init__(self, deviation_threshold: float = 0.15):
-        """
-        Args:
-            deviation_threshold: Normalized deviation above which a joint is flagged.
-                                 Typical range: 0.1 - 0.3 (adjust based on testing).
-        """
+        # Guard: skip re-initialisation on subsequent calls.
+        if hasattr(self, "deviation_threshold"):
+            return
         self.deviation_threshold = deviation_threshold
-        self.references: Dict[int, np.ndarray] = {}  # exercise_id -> reference keypoints
+        self.references: Dict[Tuple[str, int], np.ndarray] = {}  # (dataset, exercise_id) -> reference keypoints
     
-    def load_reference(self, exercise_id: int) -> np.ndarray | None:
+    def load_reference(self, exercise_id: int, dataset: str = "intellirehab") -> np.ndarray | None:
         """Load reference keypoints for an exercise."""
-        if exercise_id in self.references:
-            return self.references[exercise_id]
-        
-        ref_path = os.path.join(
-            settings.WEIGHTS_DIR,
-            f"reference_exercise_{exercise_id}.npy"
-        )
-        
-        if not os.path.exists(ref_path):
+        dataset_key = settings._normalize_dataset_key(dataset)
+        cache_key = (dataset_key, exercise_id)
+
+        if cache_key in self.references:
+            return self.references[cache_key]
+
+        # Prefer dataset-specific reference directory first.
+        ref_paths = [
+            os.path.join(
+                settings.weights_dir_for(dataset_key),
+                f"reference_exercise_{exercise_id}.npy",
+            ),
+            # Backward-compatible legacy location at weights root.
+            os.path.join(settings.WEIGHTS_DIR, f"reference_exercise_{exercise_id}.npy"),
+        ]
+
+        ref_path = next((p for p in ref_paths if os.path.exists(p)), None)
+        if ref_path is None:
             return None
-        
+
         reference = np.load(ref_path)
-        self.references[exercise_id] = reference
+        self.references[cache_key] = reference
         return reference
     
     def compute_deviations(
         self,
         user_keypoints: np.ndarray,
-        exercise_id: int
+        exercise_id: int,
+        dataset: str = "intellirehab",
     ) -> Dict[str, float] | None:
         """
         Compute per-joint deviation scores.
@@ -119,7 +140,7 @@ class ExplainabilityService:
         Returns:
             Dictionary mapping joint names to deviation scores, or None if no reference.
         """
-        reference = self.load_reference(exercise_id)
+        reference = self.load_reference(exercise_id, dataset=dataset)
         if reference is None:
             return None
         
@@ -195,11 +216,17 @@ class ExplainabilityService:
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         
         # Try H.264 codec first (better browser support), fallback to mp4v
-        fourcc = cv2.VideoWriter_fourcc(*'avc1')
-        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-        
-        # If avc1 fails, try mp4v
-        if not out.isOpened():
+        try:
+            fourcc = cv2.VideoWriter_fourcc(*'avc1')
+            out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+            
+            # Use 'isOpened' to check if the writer was successfully initialized.
+            # Sometimes OpenCV doesn't throw, but just returns an unopened writer.
+            if not out.isOpened():
+                raise cv2.error("Failed to open avc1 writer")
+                
+        except (cv2.error, Exception):
+            # Fallback to mp4v if avc1 is missing (common on Windows without OpenH264 DLL)
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
         

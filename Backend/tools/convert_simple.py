@@ -3,7 +3,7 @@ Simplified data converter that avoids NumPy import issues.
 Converts IntelliRehab .txt files to .npy format.
 
 Usage:
-    python tools/convert_simple.py --input ../SkeletonData/RawData --output ../SkeletonData/Simplified
+    python tools/convert_simple.py --input ../Datasets/SkeletonData/RawData --output ../Datasets/SkeletonData/Simplified
 """
 import os
 import sys

@@ -7,9 +7,30 @@ class SkeletonPreprocessor:
     Normalize and prepare skeleton sequences for model input.
     Handles IntelliRehab (25 Kinect joints × 3D) data format.
     Based on the reference Preprocessor that works with IntelliRehab data.
+
+    Implemented as a **Singleton**: because the preprocessor carries no
+    mutable per-request state (only the config-derived ``seq_length``),
+    a single shared instance is safe and avoids repeated object creation.
+    Pass a custom *seq_length* only during training; at inference the default
+    from config is always used.
     """
 
+    _instance: "SkeletonPreprocessor | None" = None
+
+    def __new__(cls, seq_length: int = None):
+        # Only reuse the singleton when using the default seq_length.
+        # A custom seq_length (e.g. during unit tests) gets its own instance.
+        if seq_length is None:
+            if cls._instance is None:
+                cls._instance = super().__new__(cls)
+            return cls._instance
+        return super().__new__(cls)
+
     def __init__(self, seq_length: int = None):
+        # Guard: skip re-initialisation if this is the singleton instance
+        # that was already fully set up.
+        if hasattr(self, "seq_length"):
+            return
         self.seq_length = seq_length or settings.SEQUENCE_LENGTH
 
     def normalize(self, keypoints: np.ndarray) -> np.ndarray:
