@@ -116,6 +116,16 @@ class ExplainabilityService:
             os.path.join(settings.WEIGHTS_DIR, f"reference_exercise_{exercise_id}.npy"),
         ]
 
+        # IntelliRehab 2D can reuse IntelliRehab reference keypoints.
+        if dataset_key == "intellirehab_2d":
+            ref_paths.insert(
+                1,
+                os.path.join(
+                    settings.weights_dir_for("intellirehab"),
+                    f"reference_exercise_{exercise_id}.npy",
+                ),
+            )
+
         ref_path = next((p for p in ref_paths if os.path.exists(p)), None)
         if ref_path is None:
             return None
@@ -192,7 +202,10 @@ class ExplainabilityService:
         video_path: str,
         keypoints_sequence: np.ndarray,
         deviations: Dict[str, float],
-        output_path: str
+        output_path: str,
+        exercise_id: int | None = None,
+        dataset: str = "intellirehab",
+        deviation_window_size: int = 5,
     ) -> str:
         """
         Create a new video with color-coded skeleton overlay.
@@ -206,6 +219,15 @@ class ExplainabilityService:
         Returns:
             Path to output video
         """
+        frame_deviations = None
+        if exercise_id is not None and deviation_window_size > 1:
+            frame_deviations = self._compute_windowed_deviations(
+                keypoints_sequence,
+                exercise_id=exercise_id,
+                dataset=dataset,
+                window_size=deviation_window_size,
+            )
+
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             raise ValueError(f"Cannot open video: {video_path}")
@@ -237,8 +259,12 @@ class ExplainabilityService:
                 break
             
             if frame_idx < len(keypoints_sequence):
+                active_deviations = deviations
+                if frame_deviations is not None and frame_idx < len(frame_deviations):
+                    active_deviations = frame_deviations[frame_idx]
+
                 frame = self._draw_skeleton(
-                    frame, keypoints_sequence[frame_idx], deviations, width, height
+                    frame, keypoints_sequence[frame_idx], active_deviations, width, height
                 )
             
             out.write(frame)
@@ -248,6 +274,76 @@ class ExplainabilityService:
         out.release()
         
         return output_path
+
+    def _compute_windowed_deviations(
+        self,
+        keypoints_sequence: np.ndarray,
+        exercise_id: int,
+        dataset: str = "intellirehab",
+        window_size: int = 5,
+    ) -> List[Dict[str, float]] | None:
+        """Compute per-frame joint deviations using a local moving average window."""
+        reference = self.load_reference(exercise_id, dataset=dataset)
+        if reference is None:
+            return None
+
+        user = np.asarray(keypoints_sequence, dtype=np.float32)
+        ref = np.asarray(reference, dtype=np.float32)
+
+        if user.ndim != 3 or ref.ndim != 3:
+            return None
+
+        # Align dimensions if one sequence is 2D and the other is 3D.
+        shared_dim = min(user.shape[2], ref.shape[2])
+        if shared_dim <= 0:
+            return None
+        user = user[:, :, :shared_dim]
+        ref = ref[:, :, :shared_dim]
+
+        # Align joint count.
+        shared_joints = min(user.shape[1], ref.shape[1])
+        if shared_joints <= 0:
+            return None
+        user = user[:, :shared_joints, :]
+        ref = ref[:, :shared_joints, :]
+
+        # Resample reference to match user sequence length.
+        if user.shape[0] != ref.shape[0]:
+            from scipy.interpolate import interp1d
+
+            seq_len_ref = ref.shape[0]
+            seq_len_user = user.shape[0]
+            x_old = np.linspace(0.0, 1.0, seq_len_ref)
+            x_new = np.linspace(0.0, 1.0, seq_len_user)
+
+            ref_resampled = np.zeros((seq_len_user, shared_joints, shared_dim), dtype=np.float32)
+            for joint_idx in range(shared_joints):
+                for dim_idx in range(shared_dim):
+                    f = interp1d(x_old, ref[:, joint_idx, dim_idx], kind="linear")
+                    ref_resampled[:, joint_idx, dim_idx] = f(x_new)
+            ref = ref_resampled
+
+        deviations_per_frame = np.linalg.norm(user - ref, axis=2)  # (frames, joints)
+
+        radius = max(1, window_size) // 2
+        smoothed = np.zeros_like(deviations_per_frame)
+        for frame_idx in range(deviations_per_frame.shape[0]):
+            start = max(0, frame_idx - radius)
+            end = min(deviations_per_frame.shape[0], frame_idx + radius + 1)
+            smoothed[frame_idx] = np.mean(deviations_per_frame[start:end], axis=0)
+
+        ref_std = np.std(ref)
+        if ref_std > 0:
+            smoothed = smoothed / ref_std
+
+        frame_dicts: List[Dict[str, float]] = []
+        joint_count = min(len(KINECT_JOINT_NAMES), smoothed.shape[1])
+        for frame_idx in range(smoothed.shape[0]):
+            frame_dicts.append(
+                {KINECT_JOINT_NAMES[j]: float(smoothed[frame_idx, j]) for j in range(joint_count)}
+            )
+
+        return frame_dicts
     
     def _draw_skeleton(
         self,
@@ -289,6 +385,40 @@ class ExplainabilityService:
             # Unknown skeleton format, skip drawing
             return frame
         
+        # If deviations are unavailable (no reference), draw neutral skeleton instead of green.
+        if not deviations:
+            neutral_color = (180, 180, 180)
+            for joint_a, joint_b in skeleton_connections:
+                if joint_a >= len(kpts) or joint_b >= len(kpts):
+                    continue
+
+                x1, y1 = int(kpts[joint_a, 0]), int(kpts[joint_a, 1])
+                x2, y2 = int(kpts[joint_b, 0]), int(kpts[joint_b, 1])
+
+                if x1 == 0 and y1 == 0:
+                    continue
+                if x2 == 0 and y2 == 0:
+                    continue
+
+                cv2.line(frame, (x1, y1), (x2, y2), neutral_color, 2)
+
+            for x, y in kpts:
+                x, y = int(x), int(y)
+                if x == 0 and y == 0:
+                    continue
+                cv2.circle(frame, (x, y), 5, neutral_color, -1)
+
+            cv2.putText(
+                frame,
+                "Reference unavailable: neutral overlay",
+                (10, 20),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                neutral_color,
+                1,
+            )
+            return frame
+
         # Draw connections (bones)
         for joint_a, joint_b in skeleton_connections:
             if joint_a >= len(kpts) or joint_b >= len(kpts):

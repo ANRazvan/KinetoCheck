@@ -55,9 +55,12 @@ class UIPRMDAnglesDataset(Dataset):
         seq_length: int | None = None,
         use_segmented: bool = True,
         feature_dim: int | None = None,
+        swap_labels: bool = False,
     ):
         if modality.lower() not in ("vicon", "kinect"):
             raise ValueError(f"Unknown modality: {modality}. Choose 'vicon' or 'kinect'.")
+        
+        self.swap_labels = swap_labels
 
         self.modality = modality.lower()
         self.preprocessor = UIPRMDAnglesPreprocessor(seq_length, target_dim=feature_dim)
@@ -164,5 +167,8 @@ class UIPRMDAnglesDataset(Dataset):
         raw = self._load_raw_sample(self.samples[idx])
         processed = self.preprocessor.process(raw)
         x = torch.tensor(processed, dtype=torch.float32)
-        y = torch.tensor(self.labels[idx], dtype=torch.long)
+        label = self.labels[idx]
+        if self.swap_labels:
+            label = 1 - label  # Flip 0↔1 for diagnostic testing
+        y = torch.tensor(label, dtype=torch.long)
         return x, y

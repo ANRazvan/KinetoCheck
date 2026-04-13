@@ -45,6 +45,7 @@ from abc import ABC, abstractmethod
 
 from torch.utils.data import Dataset
 from app.models.base_model import BaseMovementModel
+from config import settings
 
 # ── Abstract Factory ─────────────────────────────────────────────────
 
@@ -65,6 +66,11 @@ class AbstractTrainingFactory(ABC):
     @abstractmethod
     def num_joints(self) -> int:
         """Number of skeleton joints this dataset/preprocessor produces."""
+
+    @property
+    def keypoint_dim(self) -> int:
+        """Per-joint coordinate dimension produced by this factory."""
+        return settings.KEYPOINT_DIM
 
     @abstractmethod
     def create_dataset(
@@ -114,6 +120,7 @@ class AbstractTrainingFactory(ABC):
 
 # Import concrete factories from new files
 from training.factories.intellirehab_factory import IntelliRehabTrainingFactory
+from training.factories.intellirehab_2d_factory import IntelliRehab2DTrainingFactory
 from training.factories.uiprmd_factory import UIPRMDTrainingFactory
 from training.factories.uiprmd_angles_factory import UIPRMDAnglesTrainingFactory
 
@@ -122,7 +129,9 @@ from training.factories.uiprmd_angles_factory import UIPRMDAnglesTrainingFactory
 
 TRAINING_FACTORIES: dict[str, type[AbstractTrainingFactory] | tuple[type[AbstractTrainingFactory], dict]] = {
     "intellirehab": IntelliRehabTrainingFactory,
+    "intellirehab_2d": IntelliRehab2DTrainingFactory,
     "uiprmd": UIPRMDTrainingFactory,
+    "uiprmd_2d": (UIPRMDTrainingFactory, {"keypoint_dim": settings.UIPRMD_KEYPOINT_DIM_2D}),
     "uiprmd_angles_vicon": (UIPRMDAnglesTrainingFactory, {"modality": "vicon"}),
     "uiprmd_angles_kinect": (UIPRMDAnglesTrainingFactory, {"modality": "kinect"}),
 }
@@ -134,7 +143,7 @@ def get_training_factory(dataset: str = "intellirehab", **kwargs) -> AbstractTra
 
     Args:
         dataset: ``"intellirehab"`` (default), ``"uiprmd"``, 
-                 ``"uiprmd_angles_vicon"``, or ``"uiprmd_angles_kinect"``.
+                 ``"uiprmd_2d"``, ``"uiprmd_angles_vicon"``, or ``"uiprmd_angles_kinect"``.
         **kwargs: Additional arguments passed to factory constructor.
 
     Raises:

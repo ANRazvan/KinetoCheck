@@ -7,6 +7,44 @@ Complete guide to run the KinetoCheck application with trained model.
 - **Backend**: Python 3.11+, PyTorch (CUDA optional), trained model at `Backend/weights/stgat_best.pt`
 - **Frontend**: Flutter SDK 3.9+
 
+For the Temporal Pyramid STGAT workflow in `Backend/temporal_pyramid_stgat`:
+- Python environment with backend requirements installed (`opencv-python`, `ultralytics`, `mediapipe`, `torch`, `torch-geometric`).
+- UI-PRMD data under `Datasets/UIPRMD`.
+
+Backend script organization (March 2026 refactor):
+- Real-time inference helpers are now under `Backend/inference/`.
+- Diagnostics scripts are now under `Backend/diagnostics/`.
+- Setup scripts are now under `Backend/setup/`.
+- Backward-compatible wrapper entrypoints still exist at `Backend/*.py`.
+
+---
+
+## 0. Train + Select Deployment Model (Temporal Pyramid STGAT)
+
+Run automatic LOSO training, save fold/aggregate CSVs, and export one deployment checkpoint:
+
+```powershell
+cd Backend
+d:\Programming\KinetoCheck\.venv312\Scripts\python.exe -m temporal_pyramid_stgat.training.auto_loso_deploy --exercise 0 --epochs 30 --batch-size 16 --lr 0.001
+```
+
+Outputs are saved in `Backend/temporal_pyramid_stgat/weights`:
+- `loso_ex0_fold_metrics.csv`
+- `loso_ex0_aggregate.csv`
+- `loso_ex0_deployment_selection.csv`
+- `pyramid_stgat_exercise_0_deployment.pt`
+
+Assess a video with the deployment checkpoint and save window + summary CSVs:
+
+```powershell
+cd Backend
+d:\Programming\KinetoCheck\.venv312\Scripts\python.exe -m temporal_pyramid_stgat.infer_video --video D:\path\to\video.mp4 --exercise 0 --pose-backend yolo
+```
+
+Default assessment outputs are saved in `Backend/temporal_pyramid_stgat/outputs/video_assessment`:
+- `<video_name>_window_metrics.csv`
+- `<video_name>_summary.csv`
+
 ---
 
 ## 1. Start Backend API Server

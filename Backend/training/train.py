@@ -116,10 +116,12 @@ def train_exercise(
     # ── model (created via factory) ───────────────────────────────
     model = factory.create_model(model_name)
     num_joints = getattr(dataset, "num_joints", factory.num_joints)
-    model.build(num_keypoints=num_joints)
+    keypoint_dim = getattr(dataset, "keypoint_dim", factory.keypoint_dim)
+    model.build(num_keypoints=num_joints, keypoint_dim=keypoint_dim)
     info = model.get_model_info()
     print(f"  Model : {info}")
     print(f"  Joints: {num_joints}")
+    print(f"  Coord dim: {keypoint_dim}")
     print(f"  Device: {info.get('device', '?')}   AMP: {getattr(model, 'use_amp', False)}")
 
     weights_dir = settings.weights_dir_for(dataset_key)
@@ -266,7 +268,7 @@ def main():
         "--dataset",
         type=str,
         default="uiprmd",
-        help="Dataset family: 'uiprmd' (default) or 'intellirehab'.",
+        help="Dataset family: 'uiprmd' (default), 'uiprmd_2d', 'intellirehab', or 'intellirehab_2d'.",
     )
     parser.add_argument(
         "--data-dir",
@@ -285,7 +287,7 @@ def main():
     # or auto-discover available exercise IDs for other datasets.
     if args.exercise:
         exercise_ids = args.exercise
-    elif dataset_key == "intellirehab":
+    elif dataset_key in {"intellirehab", "intellirehab_2d"}:
         exercise_ids = sorted(settings.exercises_for(dataset_key).keys())
     else:
         probe = factory.create_dataset(data_dir, exercise_id=None)

@@ -22,6 +22,9 @@ venv/
 env/
 ENV/
 .venv/
+.venv312/
+Backend/.venv/
+ExeChecker/.venv/
 
 # ── PyTorch & ML ────────────────────────────────────
 *.pt
@@ -41,7 +44,10 @@ checkpoints/
 *.ckpt
 
 # ── Data ────────────────────────────────────────────
-# Uncomment if you don't want to version control datasets
+# Canonical local datasets and generated data artifacts
+Datasets/
+Video-kineto/
+# Legacy/specialized dataset roots
 SkeletonData/
 *.npy
 *.txt
@@ -77,6 +83,7 @@ frontend/windows/flutter/ephemeral/
 !.vscode/launch.json
 !.vscode/extensions.json
 .idea/
+.vs/
 *.swp
 *.swo
 *~
@@ -110,6 +117,7 @@ local_settings.py
 *.cache
 tmp/
 temp/
+.ipynb_checkpoints/
 
 # ── Gradle (Android) ────────────────────────────────
 .gradle/
@@ -119,11 +127,26 @@ local.properties
 *.ap_
 *.aab
 
+# ── .NET / Visual Studio build outputs ──────────────
+**/bin/
+**/obj/
+*.user
+*.suo
+*.pdb
+*.ilk
+*.iobj
+*.ipdb
+*.exe
+*.dll
+*.lib
+
 # ── Backend specific ────────────────────────────────
 Backend/weights/*.pt
 !Backend/weights/.gitkeep
 Backend/__pycache__/
 Backend/.pytest_cache/
+Backend/temporal_pyramid_stgat/outputs/
+ExeChecker/outputs/
 
 
 

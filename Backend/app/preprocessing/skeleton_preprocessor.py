@@ -5,7 +5,7 @@ from config import settings
 class SkeletonPreprocessor:
     """
     Normalize and prepare skeleton sequences for model input.
-    Handles IntelliRehab (25 Kinect joints × 3D) data format.
+    Handles IntelliRehab (25 Kinect joints x 3D) data format.
     Based on the reference Preprocessor that works with IntelliRehab data.
 
     Implemented as a **Singleton**: because the preprocessor carries no

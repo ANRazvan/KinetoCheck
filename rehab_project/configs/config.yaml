@@ -1,0 +1,49 @@
+defaults:
+  - dataset: uiprmd
+  - model: stgat
+  - preprocessing: standard_17
+  - _self_
+
+project:
+  name: rehab_project
+  seed: 42
+  device: cuda
+
+paths:
+  data_root: ${hydra:runtime.cwd}/rehab_project/data
+  output_root: ${hydra:runtime.output_dir}
+
+training:
+  epochs: 50
+  batch_size: 32
+  num_workers: 4
+  pin_memory: true
+  shuffle: true
+  amp: false
+
+  optimizer:
+    name: adam
+    lr: 0.001
+    weight_decay: 0.0001
+
+  scheduler:
+    enabled: false
+    name: cosine
+    t_max: ${training.epochs}
+    min_lr: 0.000001
+
+  loss:
+    name: cross_entropy
+
+  checkpoint:
+    dir: ${hydra:runtime.output_dir}/checkpoints
+    save_every: 1
+
+evaluation:
+  run_val_each_epoch: true
+
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false

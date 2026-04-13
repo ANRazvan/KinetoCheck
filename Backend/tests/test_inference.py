@@ -8,6 +8,7 @@ import pytest
 from app.models.model_factory import ModelFactory
 from app.models.base_model import BaseMovementModel
 from app.preprocessing.skeleton_preprocessor import SkeletonPreprocessor
+from app.services.inference_service import InferenceService
 from config import settings
 
 
@@ -45,11 +46,11 @@ class TestSkeletonPreprocessor:
         assert result.shape == (30, settings.NUM_KEYPOINTS, settings.KEYPOINT_DIM)
 
     def test_normalization_centered(self):
-        """After normalization, values should be in [-1, 1] range."""
+        """After z-score normalization, data should be centered with unit variance."""
         keypoints = np.random.rand(20, settings.NUM_KEYPOINTS, settings.KEYPOINT_DIM) * 640
         result = self.preprocessor.process(keypoints)
-        assert result.max() <= 1.0
-        assert result.min() >= -1.0
+        assert abs(float(result.mean())) < 1e-4
+        assert 0.9 <= float(result.std()) <= 1.1
 
     def test_dtype_is_float32(self):
         keypoints = np.random.rand(20, settings.NUM_KEYPOINTS, settings.KEYPOINT_DIM)
@@ -110,3 +111,33 @@ class TestAPIEndpoints:
         assert resp.status_code == 200
         data = resp.json()
         assert "stgat" in data["available_models"]
+
+
+class _FakeInferenceModel:
+    def predict(self, input_data):
+        return {"label": "correct", "confidence": 0.95}
+
+    def get_model_info(self):
+        return {"name": "fake", "parameters": 1}
+
+
+class _FakeRepo:
+    def get(self, exercise_id):
+        return _FakeInferenceModel()
+
+
+class TestInferenceService:
+    def test_predict_from_keypoints_enriches_result(self):
+        service = InferenceService(model_repository=_FakeRepo())
+        service.explainability.compute_deviations = lambda processed, exercise_id: {"Head": 0.2}
+        service.explainability.get_problematic_joints = lambda deviations: ["Head"]
+
+        # Flat IntelliRehab-like format: (frames, 75)
+        keypoints = np.random.rand(12, settings.NUM_KEYPOINTS * settings.KEYPOINT_DIM).astype(np.float32)
+        result = service.predict_from_keypoints(keypoints, exercise_id=0)
+
+        assert result["label"] == "correct"
+        assert result["exercise_id"] == 0
+        assert "joint_deviations" in result
+        assert result["problematic_joints"] == ["Head"]
+        assert result["model_info"]["name"] == "fake"

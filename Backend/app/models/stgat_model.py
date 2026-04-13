@@ -11,39 +11,59 @@ from torch_geometric.nn import GATConv
 from torch_geometric.data import Data, Batch
 
 from app.models.base_model import BaseMovementModel
+from app.preprocessing.graph_builder import KINECT_EDGES
 from config import settings
 
 
-# ── Kinect skeleton adjacency (25 joints) ───────────────────────────
-# Joint indices: 0=SpineBase, 1=SpineMid, 2=Neck, 3=Head,
-# 4=ShoulderLeft, 5=ElbowLeft, 6=WristLeft, 7=HandLeft,
-# 8=ShoulderRight, 9=ElbowRight, 10=WristRight, 11=HandRight,
-# 12=HipLeft, 13=KneeLeft, 14=AnkleLeft, 15=FootLeft,
-# 16=HipRight, 17=KneeRight, 18=AnkleRight, 19=FootRight,
-# 20=SpineShoulder, 21=HandTipLeft, 22=ThumbLeft,
-# 23=HandTipRight, 24=ThumbRight
-KINECT_EDGES = [
-    (0, 1), (1, 20), (20, 2), (2, 3),                        # spine + head
-    (20, 4), (4, 5), (5, 6), (6, 7), (7, 21), (7, 22),      # left arm + hand
-    (20, 8), (8, 9), (9, 10), (10, 11), (11, 23), (11, 24),  # right arm + hand
-    (0, 12), (12, 13), (13, 14), (14, 15),                    # left leg
-    (0, 16), (16, 17), (17, 18), (18, 19),                    # right leg
+# 17-joint order must match UIPRMDPreprocessor.align_vicon_to_mediapipe output:
+# [MP0, MP11, MP12, MP13, MP14, MP15, MP16, MP23, MP24,
+#  MP25, MP26, MP27, MP28, MP29, MP30, MP31, MP32]
+UIPRMD_VICON_17_JOINT_NAMES = [
+    "Nose",            # 0  (MP0)
+    "LShoulder",       # 1  (MP11)
+    "RShoulder",       # 2  (MP12)
+    "LElbow",          # 3  (MP13)
+    "RElbow",          # 4  (MP14)
+    "LWrist",          # 5  (MP15)
+    "RWrist",          # 6  (MP16)
+    "LHip",            # 7  (MP23)
+    "RHip",            # 8  (MP24)
+    "LKnee",           # 9  (MP25)
+    "RKnee",           # 10 (MP26)
+    "LAnkle",          # 11 (MP27)
+    "RAnkle",          # 12 (MP28)
+    "LHeel",           # 13 (MP29)
+    "RHeel",           # 14 (MP30)
+    "LFootIndex",      # 15 (MP31)
+    "RFootIndex",      # 16 (MP32)
 ]
 
-# UI-PRMD (17 joints)
-# 0/Pelvis, 1/L5(Lower_Spine), 2/L3(Mid_Spine?), 3/T12, 4/T8, 5/Neck, 6/Head
-# 7/RSh, 8/LSh, 9/RArm, 10/RFore, 11/RHand, 12/LArm, 13/LFore, 14/LHand
-# 15/RLeg, 16/LLeg. (Based on typical Vicon plug-in-Gait or similar, but we need edges valid < 17)
-# For now, let's defined a minimal tree.
-# This assumes 0-indexed joints match Vicon output order.
-# FIXME: This is an approximation.
-UIPRMD_EDGES = [
-    (0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), # Spine up to head
-    (4, 7), (4, 8), # Shoulders attached to upper spine area
-    (7, 9), (9, 10), (10, 11), # Right arm
-    (8, 12), (12, 13), (13, 14), # Left arm
-    (0, 15), (0, 16) # Legs attached to pelvis
+# Spatial graph for the aligned 17-joint Vicon/MediaPipe representation.
+UIPRMD_VICON_17_EDGES = [
+    (0, 1), (0, 2),                     # head to shoulders
+    (1, 2),                             # shoulder girdle
+    (1, 3), (3, 5),                     # left arm
+    (2, 4), (4, 6),                     # right arm
+    (1, 7), (2, 8), (7, 8),             # torso
+    (7, 9), (9, 11),                    # left upper/lower leg
+    (8, 10), (10, 12),                  # right upper/lower leg
+    (11, 13), (11, 15), (13, 15),       # left foot chain
+    (12, 14), (12, 16), (14, 16),       # right foot chain
 ]
+
+
+def get_edges_for_num_keypoints(num_keypoints: int):
+    """Return the skeleton graph edges for the active joint layout."""
+    if num_keypoints == len(UIPRMD_VICON_17_JOINT_NAMES):
+        return UIPRMD_VICON_17_EDGES
+    if num_keypoints == settings.NUM_KEYPOINTS:
+        return KINECT_EDGES
+
+    logger.warning(
+        "Unknown num_keypoints=%s. Falling back to Kinect graph and filtering out-of-range edges.",
+        num_keypoints,
+    )
+    return KINECT_EDGES
 
 
 def build_edge_index(edges, num_nodes: int) -> torch.Tensor:
@@ -140,11 +160,8 @@ class STGATNetwork(nn.Module):
             nn.Linear(hidden_dim // 2, num_classes),
         )
 
-        # Pre-build edge index
-        if num_keypoints == 17:
-             edges = UIPRMD_EDGES
-        else:
-             edges = KINECT_EDGES
+        # Pre-build edge index with dataset-consistent skeleton topology.
+        edges = get_edges_for_num_keypoints(num_keypoints)
              
         self.register_buffer(
             "edge_index",

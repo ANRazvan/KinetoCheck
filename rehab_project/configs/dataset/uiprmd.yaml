@@ -1,0 +1,24 @@
+name: uiprmd
+
+description: UIPRMD skeleton action recognition dataset
+
+num_classes: 10
+
+paths:
+  raw_root: ${paths.data_root}/UIPRMD
+  processed_root: ${paths.data_root}/processed/uiprmd
+
+splits:
+  train: train
+  val: val
+  test: test
+
+input:
+  num_joints: 17
+  num_features: 3
+  max_frames: 120
+  fps: 30
+
+label:
+  field: action_label
+  offset: 0

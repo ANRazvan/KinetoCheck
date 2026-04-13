@@ -72,14 +72,16 @@ class Settings:
     # Backward-compatible alias used by older call-sites.
     EXERCISES: Dict[int, str] = INTELLIREHAB_EXERCISES
 
-    # Pose extractor backend: "yolo" (swap to e.g. "mediapipe" later)
-    POSE_EXTRACTOR: str = os.getenv("POSE_EXTRACTOR", "yolo")
+    # Pose extractor backend: "mediapipe" (default) or "yolo"
+    POSE_EXTRACTOR: str = os.getenv("POSE_EXTRACTOR", "mediapipe")
 
     # Model hyperparameters
     NUM_KEYPOINTS: int = 25  # Kinect skeleton joints (IntelliRehab)
     KEYPOINT_DIM: int = 3  # x, y, z
     UIPRMD_NUM_KEYPOINTS: int = 17
     UIPRMD_KEYPOINT_DIM: int = 3
+    UIPRMD_KEYPOINT_DIM_2D: int = 2
+    INTELLIREHAB_KEYPOINT_DIM_2D: int = 2
     NUM_CLASSES: int = 2  # correct / incorrect
     SEQUENCE_LENGTH: int = 120  # number of frames per clip
 
@@ -138,20 +140,29 @@ class Settings:
         aliases = {
             "intelli": "intellirehab",
             "intelli_rehab": "intellirehab",
+            "intellirehab2d": "intellirehab_2d",
+            "intellirehab-2d": "intellirehab_2d",
+            "intelli_2d": "intellirehab_2d",
+            "intelli-rehab-2d": "intellirehab_2d",
             "ui-prmd": "uiprmd",
             "ui_prmd": "uiprmd",
             "ui": "uiprmd",
+            "ui-prmd-2d": "uiprmd_2d",
+            "ui_prmd_2d": "uiprmd_2d",
+            "uiprmd2d": "uiprmd_2d",
         }
         return aliases.get(key, key)
 
     def data_dir_for(self, dataset: str = "intellirehab") -> str:
         """Return dataset-specific data directory."""
         key = self._normalize_dataset_key(dataset)
-        if key == "intellirehab":
+        if key in {"intellirehab", "intellirehab_2d"}:
             return self.INTELLIREHAB_DATA_DIR
-        if key == "uiprmd":
+        if key in {"uiprmd", "uiprmd_2d"}:
             return self.UIPRMD_DATA_DIR
-        raise ValueError(f"Unknown dataset '{dataset}'. Expected: intellirehab | uiprmd")
+        raise ValueError(
+            f"Unknown dataset '{dataset}'. Expected: intellirehab | intellirehab_2d | uiprmd | uiprmd_2d"
+        )
 
     def weights_dir_for(self, dataset: str = "intellirehab") -> str:
         """Return dataset-specific weights directory under Backend/weights/."""
@@ -171,11 +182,22 @@ class Settings:
     def exercises_for(self, dataset: str = "intellirehab") -> Dict[int, str]:
         """Return exercise registry for the selected dataset."""
         key = self._normalize_dataset_key(dataset)
-        if key == "intellirehab":
+        if key in {"intellirehab", "intellirehab_2d"}:
             return self.INTELLIREHAB_EXERCISES
-        if key == "uiprmd":
+        if key in {"uiprmd", "uiprmd_2d"}:
             return self.UIPRMD_EXERCISES
-        raise ValueError(f"Unknown dataset '{dataset}'. Expected: intellirehab | uiprmd")
+        raise ValueError(
+            f"Unknown dataset '{dataset}'. Expected: intellirehab | intellirehab_2d | uiprmd | uiprmd_2d"
+        )
+
+    def uiprmd_keypoint_dim_for_dataset(self, dataset: str = "uiprmd") -> int:
+        """Return UI-PRMD keypoint dimension for the selected dataset variant."""
+        key = self._normalize_dataset_key(dataset)
+        if key == "uiprmd_2d":
+            return self.UIPRMD_KEYPOINT_DIM_2D
+        if key == "uiprmd":
+            return self.UIPRMD_KEYPOINT_DIM
+        raise ValueError(f"Unknown UI-PRMD dataset '{dataset}'. Expected: uiprmd | uiprmd_2d")
 
     def exercise_name_for(self, dataset: str, exercise_id: int) -> str:
         """Return dataset-specific exercise name."""

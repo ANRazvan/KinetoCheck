@@ -6,6 +6,7 @@ Stage 3: train on mixed Vicon+Kinect angles with augmentation
 """
 
 import argparse
+import csv
 import os
 import sys
 import time
@@ -81,6 +82,7 @@ def _train_one_stage(
     model,
     epochs: int,
     save_path: str,
+    epoch_logger=None,
 ) -> float:
     if len(dataset) == 0:
         print(f"  No samples for {stage_name}. Skipping.")
@@ -149,6 +151,33 @@ def _train_one_stage(
             epoch_time=0.0,
             elapsed=time.time() - start,
         )
+
+        # Print per-epoch metrics for live monitoring.
+        print(
+            f"[{stage_name}] ex={exercise_id} ep={epoch + 1}/{epochs} "
+            f"train_loss={train_loss:.4f} train_acc={train_acc:.4f} "
+            f"val_loss={val_loss:.4f} val_acc={val_acc:.4f} lr={lr:.2e}"
+        )
+
+        # Persist each epoch's metrics when a logger is provided.
+        if epoch_logger is not None:
+            epoch_logger(
+                {
+                    "stage": stage_name,
+                    "exercise_id": exercise_id,
+                    "exercise_name": exercise_name,
+                    "epoch": epoch + 1,
+                    "total_epochs": epochs,
+                    "train_loss": train_loss,
+                    "train_acc": train_acc,
+                    "val_loss": val_loss,
+                    "val_acc": val_acc,
+                    "lr": lr,
+                    "elapsed_sec": metrics.elapsed,
+                    "weights_path": save_path,
+                }
+            )
+
         callbacks.on_epoch_end(metrics)
         if callbacks.should_stop:
             break
@@ -179,6 +208,11 @@ def main():
     parser.add_argument("--lr-stage2", type=float, default=settings.LR_STAGE2_ANGLES)
     parser.add_argument("--lr-stage3", type=float, default=settings.LR_STAGE3_ANGLES)
     parser.add_argument("--feature-dim", type=int, default=settings.ANGLES_KINECT_DIM)
+    parser.add_argument(
+        "--swap-vicon-labels",
+        action="store_true",
+        help="[DIAGNOSTIC] Swap Vicon labels (0↔1) to test label correctness",
+    )
     args = parser.parse_args()
 
     settings.BATCH_SIZE = args.batch_size
@@ -188,6 +222,12 @@ def main():
 
     exercises = args.exercise if args.exercise else list(range(10))
     common_dim = args.feature_dim
+
+    if args.swap_vicon_labels:
+        print("\n" + "=" * 80)
+        print("[DIAGNOSTIC] Vicon labels SWAPPED for testing (0↔1)")
+        print("If accuracy jumps to ~95%+, original labels were likely inverted!")
+        print("=" * 80 + "\n")
 
     aug_stage3 = AugmentationPipeline(
         angle_noise_std=settings.AUGMENT_ANGLE_NOISE_STD,
@@ -204,9 +244,53 @@ def main():
 
         weights_root = Path(settings.WEIGHTS_DIR) / "uiprmd_angles"
         weights_root.mkdir(parents=True, exist_ok=True)
+        metrics_root = weights_root / "metrics"
+        metrics_root.mkdir(parents=True, exist_ok=True)
         s1_path = str(weights_root / f"stage1_ex{exercise_id}_best.pt")
         s2_path = str(weights_root / f"stage2_ex{exercise_id}_best.pt")
         s3_path = str(weights_root / f"stage3_ex{exercise_id}_best.pt")
+
+        metrics_csv = metrics_root / f"exercise_{exercise_id}_epochs.csv"
+        with open(metrics_csv, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(
+                f,
+                fieldnames=[
+                    "stage",
+                    "exercise_id",
+                    "exercise_name",
+                    "epoch",
+                    "total_epochs",
+                    "train_loss",
+                    "train_acc",
+                    "val_loss",
+                    "val_acc",
+                    "lr",
+                    "elapsed_sec",
+                    "weights_path",
+                ],
+            )
+            writer.writeheader()
+
+        def _log_epoch(row: dict) -> None:
+            with open(metrics_csv, "a", newline="", encoding="utf-8") as af:
+                writer = csv.DictWriter(
+                    af,
+                    fieldnames=[
+                        "stage",
+                        "exercise_id",
+                        "exercise_name",
+                        "epoch",
+                        "total_epochs",
+                        "train_loss",
+                        "train_acc",
+                        "val_loss",
+                        "val_acc",
+                        "lr",
+                        "elapsed_sec",
+                        "weights_path",
+                    ],
+                )
+                writer.writerow(row)
 
         acc1 = float("nan")
         acc2 = float("nan")
@@ -219,6 +303,7 @@ def main():
                 exercise_id=exercise_id,
                 use_segmented=True,
                 feature_dim=common_dim,
+                swap_labels=args.swap_vicon_labels,
             )
             s1_model = ModelFactory.create(settings.ACTIVE_MODEL)
             s1_model.build(num_keypoints=common_dim, keypoint_dim=1, lr=args.lr_stage1)
@@ -230,6 +315,7 @@ def main():
                 model=s1_model,
                 epochs=args.epochs,
                 save_path=s1_path,
+                epoch_logger=_log_epoch,
             )
         else:
             print(f"Skipping Stage 1 (start-stage={args.start_stage})")
@@ -254,6 +340,7 @@ def main():
                 model=s2_model,
                 epochs=args.epochs,
                 save_path=s2_path,
+                epoch_logger=_log_epoch,
             )
         else:
             print(f"Skipping Stage 2 (start-stage={args.start_stage})")
@@ -289,6 +376,7 @@ def main():
             model=s3_model,
             epochs=args.epochs,
             save_path=s3_path,
+            epoch_logger=_log_epoch,
         )
 
         if args.start_stage >= 3 and not os.path.exists(s2_path):
@@ -303,6 +391,7 @@ def main():
             f"Summary ex={exercise_id} | "
             f"stage1={s1_text} stage2={s2_text} stage3={acc3:.4f}"
         )
+        print(f"Epoch metrics saved: {metrics_csv}")
 
 
 if __name__ == "__main__":

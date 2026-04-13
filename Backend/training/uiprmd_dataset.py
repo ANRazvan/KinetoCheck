@@ -4,8 +4,10 @@ Movement Dataset).
 
 UI-PRMD file layout
 -------------------
-Files are stored as CSVs (comma-delimited) with **no header row**.
-Each row is one frame: 51 values = 17 joints × 3 coordinates (X, Y, Z).
+Files are stored as CSV/TXT with **no header row**.
+Each row is one frame and may contain either:
+- 117 values = 39 Vicon markers × 3 coordinates
+- 51 values  = 17 MediaPipe-compatible joints × 3 coordinates
 
 Expected directory structure::
 
@@ -62,12 +64,15 @@ class UIPRMDDataset(Dataset):
         data_dir: str,
         exercise_id: int | None = None,
         seq_length: int | None = None,
+        keypoint_dim: int = 3,
     ):
-        self.preprocessor = UIPRMDPreprocessor(seq_length)
+        self.keypoint_dim = keypoint_dim
+        self.preprocessor = UIPRMDPreprocessor(seq_length=seq_length, keypoint_dim=keypoint_dim)
         self.exercise_id = exercise_id
         self.samples: list[str] = []
         self.labels: list[int] = []
         self.exercise_ids: list[int] = []
+        # Model is always trained on 17 aligned landmarks.
         self.num_joints: int = 17
 
         root = Path(data_dir)
@@ -101,13 +106,10 @@ class UIPRMDDataset(Dataset):
                 self.labels.append(label_int)
                 self.exercise_ids.append(eid)
 
-        if self.samples:
-            inferred = self._infer_num_joints(self.samples[0])
-            if inferred is not None:
-                self.num_joints = inferred
+        # Keep num_joints fixed at 17 because samples are aligned to MediaPipe 17.
 
     def _infer_num_joints(self, sample_path: str) -> int | None:
-        """Infer number of joints from first frame feature count (features/3)."""
+        """Infer number of joints from first frame feature count."""
         try:
             with open(sample_path, "r", encoding="utf-8") as f:
                 first_line = f.readline().strip()
@@ -115,9 +117,11 @@ class UIPRMDDataset(Dataset):
                 return None
             # UI-PRMD files can be comma-delimited or whitespace-delimited.
             feature_count = len([p for p in re.split(r"[\s,]+", first_line) if p])
-            if feature_count % 3 != 0:
-                return None
-            return feature_count // 3
+            if feature_count % 3 == 0:
+                return feature_count // 3
+            if feature_count % self.keypoint_dim == 0:
+                return feature_count // self.keypoint_dim
+            return None
         except OSError:
             return None
 
@@ -128,13 +132,13 @@ class UIPRMDDataset(Dataset):
             raw = np.loadtxt(sample_path, delimiter=",", dtype=np.float32)
             if raw.ndim == 1:
                 raw = np.expand_dims(raw, axis=0)
-            return raw
         except ValueError:
             # Fallback for space-delimited scientific-notation text files.
             raw = np.loadtxt(sample_path, dtype=np.float32)
             if raw.ndim == 1:
                 raw = np.expand_dims(raw, axis=0)
-            return raw
+            
+        return raw
 
     # ── helpers ─────────────────────────────────────────────────────
 
@@ -193,7 +197,15 @@ class UIPRMDDataset(Dataset):
 
     def __getitem__(self, idx: int):
         raw = self._load_raw_sample(self.samples[idx])
-        processed = self.preprocessor.process(raw)
+
+        # Align Vicon/legacy positions to the 17 MediaPipe-compatible landmarks.
+        aligned_3d = self.preprocessor.align_vicon_to_mediapipe(raw)
+        if self.keypoint_dim == 2:
+            aligned = aligned_3d[:, :, :2]
+        else:
+            aligned = aligned_3d
+
+        processed = self.preprocessor.process(aligned)
         x = torch.tensor(processed, dtype=torch.float32)
         y = torch.tensor(self.labels[idx], dtype=torch.long)
         return x, y

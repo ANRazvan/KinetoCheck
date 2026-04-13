@@ -141,9 +141,12 @@ def create_reference_video(
     # Normalize to screen coordinates
     keypoints_2d = normalize_to_screen(reference, width, height)
     
-    # Create video writer
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    # Prefer H.264 for browser playback; fallback to mp4v when OpenH264 is unavailable.
+    fourcc = cv2.VideoWriter_fourcc(*'avc1')
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    if not out.isOpened():
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
     
     if not out.isOpened():
         raise ValueError(f"Failed to create video writer: {output_path}")
@@ -190,8 +193,11 @@ def main():
     args = parser.parse_args()
     
     # Build paths
+    intellirehab_weights_dir = settings.weights_dir_for("intellirehab")
+    os.makedirs(intellirehab_weights_dir, exist_ok=True)
+
     reference_path = os.path.join(
-        settings.WEIGHTS_DIR,
+        intellirehab_weights_dir,
         f"reference_exercise_{args.exercise_id}.npy"
     )
     
@@ -201,7 +207,7 @@ def main():
         sys.exit(1)
     
     output_path = args.output or os.path.join(
-        settings.WEIGHTS_DIR,
+        intellirehab_weights_dir,
         f"reference_exercise_{args.exercise_id}_visualization.mp4"
     )
     

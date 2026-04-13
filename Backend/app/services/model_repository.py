@@ -43,10 +43,15 @@ class ModelRepository:
 
     def _build_kwargs(self) -> dict:
         """Return dataset-specific model input shape kwargs."""
-        if self.dataset == "uiprmd":
+        if self.dataset in {"uiprmd", "uiprmd_2d"}:
             return {
                 "num_keypoints": settings.UIPRMD_NUM_KEYPOINTS,
-                "keypoint_dim": settings.UIPRMD_KEYPOINT_DIM,
+                "keypoint_dim": settings.uiprmd_keypoint_dim_for_dataset(self.dataset),
+            }
+        if self.dataset == "intellirehab_2d":
+            return {
+                "num_keypoints": settings.NUM_KEYPOINTS,
+                "keypoint_dim": settings.INTELLIREHAB_KEYPOINT_DIM_2D,
             }
         return {
             "num_keypoints": settings.NUM_KEYPOINTS,
@@ -63,7 +68,7 @@ class ModelRepository:
         ]
 
         # Only check legacy/root paths if we are compatible with the default IntelliRehab structure (25 keypoints)
-        if self.dataset == "intellirehab":
+        if self.dataset in {"intellirehab", "intellirehab_2d"}:
             paths.extend([
                 # 3. Legacy exercise path (defaults to intellirehab)
                 settings.weights_path_for(self.model_name, exercise_id),

@@ -43,6 +43,43 @@ public class KinetoCheckApiClient
         string ActiveModel,
         List<ExerciseInfo>? Exercises);
 
+    public record TimelineWindowPrediction(
+        int StartFrame,
+        int EndFrame,
+        int ExerciseId,
+        string ExerciseName,
+        float Score,
+        string PredictedLabel,
+        int SmoothedExerciseId,
+        string SmoothedExerciseName);
+
+    public record TimelineSegmentPrediction(
+        string Label,
+        float Confidence,
+        List<string>? ProblematicJoints);
+
+    public record TimelineSegment(
+        int ExerciseId,
+        string ExerciseName,
+        int StartFrame,
+        int EndFrame,
+        int DurationFrames,
+        TimelineSegmentPrediction Prediction);
+
+    public record VideoTimelineResponse(
+        string Dataset,
+        string ModelName,
+        int TotalFrames,
+        int WindowSize,
+        int Stride,
+        int SmoothingWindow,
+        int MinSegmentFrames,
+        List<int> CandidateExerciseIds,
+        int NumWindows,
+        int NumSegments,
+        List<TimelineWindowPrediction> WindowPredictions,
+        List<TimelineSegment> Segments);
+
     // ---------- API calls ----------
 
     public async Task<HealthResponse?> HealthCheckAsync()
@@ -64,6 +101,15 @@ public class KinetoCheckApiClient
         var resp = await _http.GetAsync("/api/v1/exercises");
         resp.EnsureSuccessStatusCode();
         return await resp.Content.ReadFromJsonAsync<List<ExerciseInfo>>(JsonOpts);
+    }
+
+    public async Task<byte[]> GetReferenceVisualizationAsync(string dataset, int exerciseId)
+    {
+        var queryDataset = Uri.EscapeDataString(dataset);
+        var endpoint = $"/api/v1/reference/visualization?dataset={queryDataset}&exercise_id={exerciseId}";
+        var resp = await _http.GetAsync(endpoint);
+        resp.EnsureSuccessStatusCode();
+        return await resp.Content.ReadAsByteArrayAsync();
     }
 
     public async Task<PredictionResponse?> PredictVideoAsync(
@@ -119,5 +165,75 @@ public class KinetoCheckApiClient
             : null;
 
         return new AnnotatedVideoResult(videoData, label, confidence, problematicJoints);
+    }
+
+    public async Task<AnnotatedVideoResult?> PredictVideoAnnotatedSegmentAsync(
+        Stream fileStream,
+        string fileName,
+        int exerciseId,
+        string dataset,
+        int startFrame,
+        int endFrame)
+    {
+        using var content = new MultipartFormDataContent();
+
+        var streamContent = new StreamContent(fileStream);
+        streamContent.Headers.ContentType = new MediaTypeHeaderValue("video/mp4");
+        content.Add(streamContent, "file", fileName);
+
+        content.Add(new StringContent(exerciseId.ToString()), "exercise_id");
+        content.Add(new StringContent(dataset), "dataset");
+        content.Add(new StringContent(startFrame.ToString()), "start_frame");
+        content.Add(new StringContent(endFrame.ToString()), "end_frame");
+
+        var resp = await _http.PostAsync("/api/v1/predict/video_annotated_segment", content);
+        resp.EnsureSuccessStatusCode();
+
+        var videoData = await resp.Content.ReadAsByteArrayAsync();
+
+        var label = resp.Headers.TryGetValues("X-Prediction-Label", out var labelValues)
+            ? labelValues.FirstOrDefault() ?? "unknown"
+            : "unknown";
+
+        var confidence = resp.Headers.TryGetValues("X-Prediction-Confidence", out var confValues)
+            && float.TryParse(confValues.FirstOrDefault(), out var conf) ? conf : 0f;
+
+        var problematicJoints = resp.Headers.TryGetValues("X-Problematic-Joints", out var jointValues)
+            ? jointValues.FirstOrDefault()?.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList()
+            : null;
+
+        return new AnnotatedVideoResult(videoData, label, confidence, problematicJoints);
+    }
+
+    public async Task<VideoTimelineResponse?> PredictVideoTimelineAsync(
+        Stream fileStream,
+        string fileName,
+        string dataset,
+        string? modelName = null,
+        int windowSize = 120,
+        int stride = 30,
+        int smoothingWindow = 5,
+        int minSegmentFrames = 60)
+    {
+        using var content = new MultipartFormDataContent();
+
+        var streamContent = new StreamContent(fileStream);
+        streamContent.Headers.ContentType = new MediaTypeHeaderValue("video/mp4");
+        content.Add(streamContent, "file", fileName);
+
+        content.Add(new StringContent(dataset), "dataset");
+        content.Add(new StringContent(windowSize.ToString()), "window_size");
+        content.Add(new StringContent(stride.ToString()), "stride");
+        content.Add(new StringContent(smoothingWindow.ToString()), "smoothing_window");
+        content.Add(new StringContent(minSegmentFrames.ToString()), "min_segment_frames");
+
+        if (!string.IsNullOrWhiteSpace(modelName))
+        {
+            content.Add(new StringContent(modelName), "model_name");
+        }
+
+        var resp = await _http.PostAsync("/api/v1/predict/video_timeline", content);
+        resp.EnsureSuccessStatusCode();
+        return await resp.Content.ReadFromJsonAsync<VideoTimelineResponse>(JsonOpts);
     }
 }
