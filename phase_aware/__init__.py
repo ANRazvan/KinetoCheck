@@ -2,11 +2,12 @@
 Models package — exports all public classes.
 """
 
-from .stgat_temporal_pyramid_phase_aware import (
+from .stgat_temporal_pyramid_phase_awarev2 import (
     ExerciseEvaluator,
     ContrastiveLoss,
     DeltaRegressionLoss,
     GraphAttentionLayer,
+    RangeOfMotionLoss,
     TemporalPyramid,
     STGATBlock,
     PhaseAligner,

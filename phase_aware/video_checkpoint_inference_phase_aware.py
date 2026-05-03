@@ -56,7 +56,10 @@ import numpy as np
 import torch
 
 from phase_aware import ExerciseEvaluator
-from Preprocessing.UIPRMDPreprocessor import UIPRMDPreprocessor
+from Preprocessing.UIPRMDPreprocessor import (
+    UIPRMDPreprocessor,
+    build_features_from_aligned,
+)
 
 try:
     import cv2
@@ -138,6 +141,7 @@ class LoadedExerciseModel:
     raw_threshold: float
     checkpoint_path: Path
     use_phase_decoder: bool
+    in_channels: int = 9   # actual channel count the model was trained with
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +154,57 @@ def resolve_device(device: str) -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+def _detect_in_channels(state_dict: dict) -> int:
+    """
+    Read in_channels directly from the first layer's weight shape in the
+    saved state dict.  This is the ground truth — it never lies even when
+    the metadata field "in_channels" is stale (e.g. old 9-ch checkpoint
+    loaded after the feature pipeline was upgraded to 12 channels).
+
+    The first encoder block's spatial attention projection has weight shape
+    (out_channels, in_channels), so index [1] gives in_channels.
+    """
+    key = "encoder.0.spatial_attn.proj.weight"
+    if key in state_dict:
+        return int(state_dict[key].shape[1])
+    # Fallback: scan for any Linear weight in the first block
+    for k, v in state_dict.items():
+        if "encoder.0" in k and "weight" in k and v.ndim == 2:
+            return int(v.shape[1])
+    return 9   # safe default for very old checkpoints
+
+
+def _rebuild_template_12ch(
+    ckpt: dict,
+    preprocessor: UIPRMDPreprocessor,
+) -> torch.Tensor:
+    """
+    The checkpoint stores template_tensor with whatever channel count was
+    used at training time.  If that was 9 (old checkpoint) but the current
+    pipeline produces 12 channels, we need to rebuild the template.
+
+    We use the raw Vicon sequences stored in the dataset records — but those
+    aren't in the checkpoint.  Instead we rebuild from template_tensor itself:
+    the first 3 channels are ROM-normalised, z-scored XYZ, which is exactly
+    what build_features_from_aligned expects as input (it was produced by
+    preprocessor.process()).  So we can recover (T, 17, 3) from the 9-ch
+    tensor and re-run build_features_from_aligned on it.
+    """
+    tmpl = ckpt["template_tensor"]          # (9, T, 17) or (12, T, 17)
+    if tmpl.shape[0] == 12:
+        return tmpl                          # already new format, nothing to do
+
+    # tmpl is (9, T, 17) — channels 0-2 are XYZ, which is all we need
+    xyz_chw = tmpl[:3]                       # (3, T, 17)
+    T, J    = xyz_chw.shape[1], xyz_chw.shape[2]
+    # Rearrange to (T, J, 3) = the shape build_features_from_aligned expects
+    processed = xyz_chw.permute(1, 2, 0).cpu().numpy().astype("float32")   # (T, 17, 3)
+    features  = build_features_from_aligned(processed)                # (12, T, 17)
+    return torch.from_numpy(features).float()
+
+
 def load_models(checkpoints_root: Path, device: torch.device) -> list[LoadedExerciseModel]:
+    preprocessor = UIPRMDPreprocessor()
     loaded: list[LoadedExerciseModel] = []
 
     for exercise_dir in sorted(checkpoints_root.glob("exercise_*")):
@@ -162,14 +216,24 @@ def load_models(checkpoints_root: Path, device: torch.device) -> list[LoadedExer
         cfg  = ckpt.get("config", {})
         use_phase_decoder = bool(ckpt.get("use_phase_decoder", False))
 
+        # Detect actual in_channels from weight shapes — never trust metadata alone
+        state_dict = ckpt["model_state_dict"]
+        in_channels = _detect_in_channels(state_dict)
+        if in_channels != ckpt.get("in_channels", 9):
+            print(
+                f"  [compat] {ckpt_path.name}: metadata says in_channels="
+                f"{ckpt.get('in_channels',9)} but weights say {in_channels}. "
+                f"Using {in_channels}."
+            )
+
         model = ExerciseEvaluator(
-            in_channels=int(ckpt.get("in_channels", 9)),
+            in_channels=in_channels,
             hidden_channels=tuple(cfg.get("hidden_channels", (64, 128))),
             embedding_dim=int(ckpt.get("embedding_dim", cfg.get("embedding_dim", 128))),
             use_phase_decoder=use_phase_decoder,
         ).to(device)
 
-        missing, _ = model.load_state_dict(ckpt["model_state_dict"], strict=False)
+        missing, _ = model.load_state_dict(state_dict, strict=False)
         if missing:
             print(f"  [compat] {ckpt_path.name}: {len(missing)} keys missing.")
         model.eval()
@@ -184,7 +248,9 @@ def load_models(checkpoints_root: Path, device: torch.device) -> list[LoadedExer
                 f"Clamped to {threshold:.3f}. Consider retraining."
             )
 
-        template = ckpt["template_tensor"].detach().clone().float().unsqueeze(0).to(device)
+        # Rebuild template to 12 channels if checkpoint is from before the upgrade
+        template_raw = _rebuild_template_12ch(ckpt, preprocessor)
+        template = template_raw.detach().clone().float().unsqueeze(0).to(device)
 
         template_xyz: torch.Tensor | None = None
         if "template_xyz_tensor" in ckpt:
@@ -202,6 +268,7 @@ def load_models(checkpoints_root: Path, device: torch.device) -> list[LoadedExer
             raw_threshold=raw_threshold,
             checkpoint_path=ckpt_path,
             use_phase_decoder=use_phase_decoder,
+            in_channels=in_channels,
         ))
 
     if not loaded:
@@ -278,17 +345,34 @@ def extract_mediapipe_sequence(video_path: Path, pose_model_path: Path) -> np.nd
 
 
 # ---------------------------------------------------------------------------
-# Feature building (unchanged)
+# Feature building
 # ---------------------------------------------------------------------------
 
-def build_model_input(sequence: np.ndarray, preprocessor: UIPRMDPreprocessor) -> torch.Tensor:
-    """sequence : (T, J, 3) raw MediaPipe XYZ → (1, 9, T, J) model tensor."""
-    aligned     = preprocessor.align_vicon_to_mediapipe(sequence)
-    processed   = preprocessor.process(aligned)
-    velocity     = np.diff(processed, axis=0, prepend=processed[:1])
-    acceleration = np.diff(velocity,  axis=0, prepend=velocity[:1])
-    features = np.concatenate([processed, velocity, acceleration], axis=-1)
-    features = np.transpose(features, (2, 0, 1)).copy()
+def build_model_input(
+    sequence: np.ndarray,
+    preprocessor: UIPRMDPreprocessor,
+    in_channels: int = 12,
+) -> torch.Tensor:
+    """
+    sequence : (T, J, 3) raw MediaPipe XYZ → (1, C, T, J) model tensor.
+
+    in_channels=12 → new pipeline (angles + bone ratios, ROM normalised).
+    in_channels=9  → old pipeline (xyz + velocity + acceleration only),
+                     used automatically when an old checkpoint is loaded so
+                     the channel count always matches the model weights.
+    """
+    aligned   = preprocessor.align_vicon_to_mediapipe(sequence)
+    processed = preprocessor.process(aligned)    # (T, 17, 3)
+
+    if in_channels == 12:
+        features = build_features_from_aligned(processed)   # (12, T, 17)
+    else:
+        # Legacy 9-channel path — keeps old checkpoints working
+        velocity     = np.diff(processed, axis=0, prepend=processed[:1])
+        acceleration = np.diff(velocity,  axis=0, prepend=velocity[:1])
+        features = np.concatenate([processed, velocity, acceleration], axis=-1)
+        features = np.transpose(features, (2, 0, 1)).copy().astype(np.float32)
+
     return torch.from_numpy(features).float().unsqueeze(0)
 
 
@@ -949,7 +1033,11 @@ def process_video(
     pose_model_path: Path,
 ) -> dict:
     raw_sequence  = extract_mediapipe_sequence(video_path, pose_model_path)
-    input_tensor  = build_model_input(raw_sequence, preprocessor)
+    # Use the in_channels of the first model — all models for a given
+    # exercise share the same architecture, and mixed checkpoints are not
+    # supported in a single run.
+    in_ch = models[0].in_channels if models else 12
+    input_tensor  = build_model_input(raw_sequence, preprocessor, in_channels=in_ch)
 
     summary, joint_importance, worst_joints, phase_outputs = run_prediction(
         input_tensor, raw_sequence, models, device

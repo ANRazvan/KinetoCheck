@@ -1,6 +1,140 @@
 import Config.config as cfg
 import numpy as np
 
+# ---------------------------------------------------------------------------
+# COCO-17 joint indices:
+#  0:nose  1:l_shoulder  2:r_shoulder  3:l_elbow   4:r_elbow
+#  5:l_wrist  6:r_wrist  7:l_hip  8:r_hip  9:l_knee  10:r_knee
+#  11:l_ankle 12:r_ankle 13:l_heel 14:r_heel 15:l_foot 16:r_foot
+# ---------------------------------------------------------------------------
+
+# (parent, vertex, child) — angle computed AT the vertex joint
+ANGLE_TRIPLETS = [
+    (7,  9,  11),   # l_hip  → l_knee  → l_ankle   (left  knee flexion)
+    (8,  10, 12),   # r_hip  → r_knee  → r_ankle   (right knee flexion)
+    (9,  7,  1),    # l_knee → l_hip   → l_shoulder (left  hip flexion)
+    (10, 8,  2),    # r_knee → r_hip   → r_shoulder (right hip flexion)
+    (11, 9,  7),    # l_ankle→ l_knee  → l_hip
+    (12, 10, 8),    # r_ankle→ r_knee  → r_hip
+    (1,  3,  5),    # l_shoulder → l_elbow → l_wrist
+    (2,  4,  6),    # r_shoulder → r_elbow → r_wrist
+    (3,  1,  7),    # l_elbow    → l_shoulder → l_hip
+    (4,  2,  8),    # r_elbow    → r_shoulder → r_hip
+    (7,  8,  10),   # l_hip → r_hip → r_knee  (pelvic tilt proxy)
+    (1,  0,  2),    # l_shoulder → nose → r_shoulder
+]
+
+BONE_PAIRS = [
+    (0, 1), (0, 2),
+    (1, 2),
+    (1, 3), (3, 5),
+    (2, 4), (4, 6),
+    (1, 7), (2, 8), (7, 8),
+    (7, 9), (9, 11),
+    (8, 10),(10, 12),
+    (11,13),(12,14),
+]
+
+
+def compute_joint_angles(seq: np.ndarray) -> np.ndarray:
+    """
+    Input : (T, 17, 3)
+    Output: (T, 17)  — angle in radians at each joint.
+
+    Each triplet's angle is accumulated at the vertex joint index.
+    Joints with multiple triplets get the mean. Joints with none stay 0.
+    Always returns shape (T, 17) so it concatenates cleanly with (T, 17, 3).
+    """
+    T = seq.shape[0]
+    angles      = np.zeros((T, 17), dtype=np.float32)
+    angle_count = np.zeros(17, dtype=np.int32)
+
+    for (a, v, b) in ANGLE_TRIPLETS:
+        vec1  = seq[:, a, :] - seq[:, v, :]
+        vec2  = seq[:, b, :] - seq[:, v, :]
+        n1    = np.linalg.norm(vec1, axis=-1)
+        n2    = np.linalg.norm(vec2, axis=-1)
+        cos_a = (vec1 * vec2).sum(-1) / (n1 * n2 + 1e-6)
+        angles[:, v] += np.arccos(np.clip(cos_a, -1.0, 1.0))
+        angle_count[v] += 1
+
+    for j in range(17):
+        if angle_count[j] > 1:
+            angles[:, j] /= angle_count[j]
+
+    return angles   # (T, 17)
+
+
+def compute_bone_lengths_normalized(seq: np.ndarray) -> np.ndarray:
+    """
+    Input : (T, 17, 3)
+    Output: (T, 16)  bone lengths divided by torso length (scale-invariant).
+    """
+    torso = np.linalg.norm(seq[:, 7, :] - seq[:, 1, :], axis=-1, keepdims=True)
+    torso = np.maximum(torso, 1e-4)
+    lengths = np.stack(
+        [np.linalg.norm(seq[:, a, :] - seq[:, b, :], axis=-1) for a, b in BONE_PAIRS],
+        axis=-1,
+    )
+    return lengths / torso   # (T, 16)
+
+
+def rom_normalize(seq: np.ndarray) -> np.ndarray:
+    """
+    Per-sequence, per-joint Range-of-Motion normalization.
+
+    Input : (T, J, D)
+    Output: (T, J, D)  — each joint's trajectory rescaled to [0, 1] within
+            its own min/max for this sequence.
+
+    "Full squat depth" becomes 1.0 for everyone regardless of height or
+    coordinate system. Joints that barely move (range < 1e-4) are set to 0.5.
+    """
+    T, J, D = seq.shape
+    out = np.empty_like(seq)
+    for j in range(J):
+        for d in range(D):
+            traj = seq[:, j, d]
+            lo, hi = float(traj.min()), float(traj.max())
+            if hi - lo > 1e-4:
+                out[:, j, d] = (traj - lo) / (hi - lo)
+            else:
+                out[:, j, d] = 0.5
+    return out.astype(np.float32)
+
+
+def build_features_from_aligned(processed: np.ndarray) -> np.ndarray:
+    """
+    Convert a preprocessed (T, 17, 3) sequence into a (12, T, 17) model tensor.
+
+    Channels 0-2  : ROM-normalised, z-scored XYZ positions
+    Channels 3-5  : velocity  (delta position per frame)
+    Channels 6-8  : acceleration
+    Channel  9    : joint angle in radians (geometry-invariant)
+    Channel  10   : angular velocity
+    Channel  11   : bone-length ratio normalised by torso length
+
+    `processed` must be the output of preprocessor.process() — already
+    ROM-normalised and z-scored, shape (T, 17, 3).
+
+    This is the single source of truth for feature extraction used by both
+    training and inference. Import it from here in both places.
+    """
+    velocity     = np.diff(processed, axis=0, prepend=processed[:1])   # (T,17,3)
+    acceleration = np.diff(velocity,  axis=0, prepend=velocity[:1])    # (T,17,3)
+
+    angles  = compute_joint_angles(processed)[:, :, np.newaxis]        # (T,17,1)
+    ang_vel = np.diff(angles, axis=0, prepend=angles[:1])              # (T,17,1)
+
+    bone = compute_bone_lengths_normalized(processed)                   # (T,16)
+    bone = np.concatenate([bone, bone[:, -1:]], axis=-1)[:, :, np.newaxis]  # (T,17,1)
+
+    features = np.concatenate(
+        [processed, velocity, acceleration, angles, ang_vel, bone], axis=-1
+    )                                                                   # (T,17,12)
+    return np.transpose(features, (2, 0, 1)).copy().astype(np.float32) # (12,T,17)
+
+
 class UIPRMDPreprocessor:
 
     _instance : 'UIPRMDPreprocessor | None ' = None
@@ -211,9 +345,13 @@ class UIPRMDPreprocessor:
         Steps:
         1) Reshape to (T, J, D)
         2) Resample sequence to configured length
-        3) Z-score normalization
+        3) ROM normalization — rescale each joint to [0,1] within its own
+           min/max so "full squat depth" = 1.0 for everyone regardless of
+           height, coordinate system, or camera distance.
+        4) Z-score normalization
         """
         seq = self.reshape_to_joints(keypoints)
         seq = self.pad_or_truncate(seq)
+        seq = rom_normalize(seq)
         seq = self.normalize(seq)
         return seq.astype(np.float32)

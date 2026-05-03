@@ -43,8 +43,8 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from phase_aware import ContrastiveLoss, DeltaRegressionLoss, ExerciseEvaluator
-from Preprocessing.UIPRMDPreprocessor import UIPRMDPreprocessor
+from phase_aware import ContrastiveLoss, DeltaRegressionLoss, ExerciseEvaluator, RangeOfMotionLoss
+from Preprocessing.UIPRMDPreprocessor import UIPRMDPreprocessor, build_features_from_aligned
 from Preprocessing.UIPRMD_loader import UIPRMDLoader
 
 
@@ -65,6 +65,7 @@ class TrainingConfig:
     embedding_dim: int = 128
     margin: float = 1.0
     delta_weight: float = 0.1
+    rom_weight: float = 0.3
     train_ratio: float = 0.8
     val_ratio: float = 0.1
     test_ratio: float = 0.1
@@ -109,14 +110,9 @@ class ExercisePairDataset(Dataset):
     def _record_to_tensor(
         record: dict, preprocessor: UIPRMDPreprocessor
     ) -> torch.Tensor:
-        aligned = preprocessor.align_vicon_to_mediapipe(record["sequence"])
+        aligned   = preprocessor.align_vicon_to_mediapipe(record["sequence"])
         processed = preprocessor.process(aligned)            # (T, 17, 3)
-
-        velocity     = np.diff(processed, axis=0, prepend=processed[:1])
-        acceleration = np.diff(velocity,  axis=0, prepend=velocity[:1])
-
-        features = np.concatenate([processed, velocity, acceleration], axis=-1)  # (T, 17, 9)
-        features = np.transpose(features, (2, 0, 1)).copy()                      # (9, T, 17)
+        features  = build_features_from_aligned(processed)  # (12, T, 17)
         return torch.from_numpy(features).float()
 
     def __len__(self) -> int:
@@ -215,14 +211,10 @@ def build_template_tensor(
 
     tensors = []
     for r in correct_records:
-        aligned  = preprocessor.align_vicon_to_mediapipe(r["sequence"])
+        aligned   = preprocessor.align_vicon_to_mediapipe(r["sequence"])
         processed = preprocessor.process(aligned)
-        velocity     = np.diff(processed, axis=0, prepend=processed[:1])
-        acceleration = np.diff(velocity,  axis=0, prepend=velocity[:1])
-        features = np.concatenate([processed, velocity, acceleration], axis=-1)
-        tensors.append(
-            torch.from_numpy(np.transpose(features, (2, 0, 1)).copy()).float()
-        )
+        features  = build_features_from_aligned(processed)  # (12, T, 17)
+        tensors.append(torch.from_numpy(features).float())
 
     return torch.stack(tensors, dim=0).mean(dim=0)
 
@@ -387,6 +379,7 @@ def evaluate(
     delta_criterion: DeltaRegressionLoss | None,
     device: torch.device,
     delta_weight: float = 0.1,
+    rom_criterion=None,
 ) -> dict[str, float | torch.Tensor]:
     model.eval()
     losses, scores, targets = [], [], []
@@ -410,6 +403,9 @@ def evaluate(
                     target,
                 )
                 loss = loss + delta_weight * d_loss
+
+            if rom_criterion is not None:
+                loss = loss + rom_criterion(user, template, target)
 
             losses.append(float(loss.item()))
             scores.append(outputs["similarity_score"].detach().cpu())
@@ -477,7 +473,7 @@ def train_one_exercise(exercise_id: int, cfg: TrainingConfig) -> dict[str, float
 
     device = resolve_device(cfg.device)
     model = ExerciseEvaluator(
-        in_channels=9,
+        in_channels=12,
         hidden_channels=cfg.hidden_channels,
         embedding_dim=cfg.embedding_dim,
         use_phase_decoder=cfg.use_phase_decoder,
@@ -485,6 +481,7 @@ def train_one_exercise(exercise_id: int, cfg: TrainingConfig) -> dict[str, float
 
     criterion       = ContrastiveLoss(margin=cfg.margin)
     delta_criterion = DeltaRegressionLoss() if cfg.use_phase_decoder else None
+    rom_criterion   = RangeOfMotionLoss(weight=cfg.rom_weight)
     optimizer       = torch.optim.Adam(
         model.parameters(), lr=cfg.learning_rate, weight_decay=cfg.weight_decay
     )
@@ -526,14 +523,16 @@ def train_one_exercise(exercise_id: int, cfg: TrainingConfig) -> dict[str, float
                 )
                 loss = loss + cfg.delta_weight * d_loss
 
+            loss = loss + rom_criterion(user, template, target)
+
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
             optimizer.step()
             train_losses.append(float(loss.item()))
 
         train_loss   = float(np.mean(train_losses)) if train_losses else 0.0
-        val_metrics  = evaluate(model, val_loader,  criterion, delta_criterion, device, cfg.delta_weight)
-        test_metrics = evaluate(model, test_loader, criterion, delta_criterion, device, cfg.delta_weight)
+        val_metrics  = evaluate(model, val_loader,  criterion, delta_criterion, device, cfg.delta_weight, rom_criterion)
+        test_metrics = evaluate(model, test_loader, criterion, delta_criterion, device, cfg.delta_weight, rom_criterion)
 
         epoch_metrics = {
             "exercise_id":   exercise_id,
@@ -565,11 +564,11 @@ def train_one_exercise(exercise_id: int, cfg: TrainingConfig) -> dict[str, float
             "val_threshold":        float(val_metrics["threshold"]),
             # ---- overlay / inference fields ----
             "template_xyz_tensor":  template_xyz_tensor,  # (3, T, J) raw XY for overlay
-            "in_channels":          9,
+            "in_channels":          12,
             "hidden_channels":      list(cfg.hidden_channels),
             "embedding_dim":        cfg.embedding_dim,
             "use_phase_decoder":    cfg.use_phase_decoder,
-            "feature_channels":     ["x", "y", "z", "vx", "vy", "vz", "ax", "ay", "az"],
+            "feature_channels":     ["x","y","z","vx","vy","vz","ax","ay","az","angle","angular_vel","bone_ratio"],
             "preprocessor_config":  {
                 "align_method":        "vicon_to_mediapipe",
                 "num_joints":          17,
@@ -647,6 +646,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hidden-channels",  type=int,   nargs="*", default=[64, 128])
     parser.add_argument("--margin",           type=float, default=1.0)
     parser.add_argument("--delta-weight",     type=float, default=0.1)
+    parser.add_argument("--rom-weight",       type=float, default=0.3)
     parser.add_argument("--train-ratio",      type=float, default=0.8)
     parser.add_argument("--val-ratio",        type=float, default=0.1)
     parser.add_argument("--test-ratio",       type=float, default=0.1)
@@ -675,6 +675,7 @@ def main(argv: Iterable[str] | None = None) -> None:
         embedding_dim=args.embedding_dim,
         margin=args.margin,
         delta_weight=args.delta_weight,
+        rom_weight=args.rom_weight,
         train_ratio=args.train_ratio,
         val_ratio=args.val_ratio,
         test_ratio=args.test_ratio,
@@ -699,4 +700,4 @@ def main(argv: Iterable[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
-    main()  
+    main()

@@ -688,3 +688,53 @@ class DeltaRegressionLoss(nn.Module):
             return torch.tensor(0.0, device=pred_delta.device, requires_grad=True)
 
         return (loss_all * mask).sum() / mask.sum()
+
+
+class RangeOfMotionLoss(nn.Module):
+    """
+    Penalises sequences where the user does NOT reach the template's range
+    of motion, without penalising doing MORE than the template.
+
+    For a squat: if the template knee bends 120 degrees and the user only
+    bends 60 degrees, that's a shortfall of 50% — penalised.
+    If the user bends 130 degrees, shortfall = 0 — no penalty.
+
+    Parameters
+    ----------
+    weight       : overall loss scale added to the total training loss
+    min_coverage : fraction of template ROM the user must reach (default 0.75)
+    """
+
+    def __init__(self, weight: float = 0.3, min_coverage: float = 0.75):
+        super().__init__()
+        self.weight       = weight
+        self.min_coverage = min_coverage
+
+    def forward(
+        self,
+        user_seq:     torch.Tensor,   # (B, C, T, J)
+        template_seq: torch.Tensor,   # (B, C, T, J)
+        labels:       torch.Tensor,   # (B,)  1=correct attempt, 0=incorrect
+    ) -> torch.Tensor:
+        # First 3 channels are XYZ position (ROM-normalised by preprocessor)
+        u = user_seq[:, :3, :, :]
+        t = template_seq[:, :3, :, :]
+
+        # Peak-to-peak range over the time axis
+        user_rom = u.max(dim=2).values - u.min(dim=2).values   # (B, 3, J)
+        tmpl_rom = t.max(dim=2).values - t.min(dim=2).values   # (B, 3, J)
+
+        # What fraction of the template ROM did the user cover?
+        coverage = user_rom / (tmpl_rom + 1e-6)                # (B, 3, J)
+
+        # One-sided penalty: only punish shortfall, not exceeding the template
+        shortfall = F.relu(self.min_coverage - coverage)        # (B, 3, J)
+        loss_per_sample = shortfall.mean(dim=(1, 2))            # (B,)
+
+        # Only penalise correct-label samples — incorrect ones intentionally
+        # have wrong ROM so we don't want to push them toward the template
+        mask = labels.float().view(-1)
+        if mask.sum() < 1:
+            return torch.tensor(0.0, device=user_seq.device, requires_grad=True)
+
+        return self.weight * (loss_per_sample * mask).sum() / mask.sum()
