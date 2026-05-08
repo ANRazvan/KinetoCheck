@@ -90,17 +90,18 @@ def rom_normalize(seq: np.ndarray) -> np.ndarray:
     "Full squat depth" becomes 1.0 for everyone regardless of height or
     coordinate system. Joints that barely move (range < 1e-4) are set to 0.5.
     """
-    T, J, D = seq.shape
-    out = np.empty_like(seq)
-    for j in range(J):
-        for d in range(D):
-            traj = seq[:, j, d]
-            lo, hi = float(traj.min()), float(traj.max())
-            if hi - lo > 1e-4:
-                out[:, j, d] = (traj - lo) / (hi - lo)
-            else:
-                out[:, j, d] = 0.5
-    return out.astype(np.float32)
+    # T, J, D = seq.shape
+    # out = np.empty_like(seq)
+    # for j in range(J):
+    #     for d in range(D):
+    #         traj = seq[:, j, d]
+    #         lo, hi = float(traj.min()), float(traj.max())
+    #         if hi - lo > 1e-4:
+    #             out[:, j, d] = (traj - lo) / (hi - lo)
+    #         else:
+    #             out[:, j, d] = 0.5
+    # return out.astype(np.float32)
+    return seq.astype(np.float32)  # Placeholder: disable ROM normalization for now.
 
 
 def build_features_from_aligned(processed: np.ndarray) -> np.ndarray:

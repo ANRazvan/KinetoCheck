@@ -64,8 +64,8 @@ class TrainingConfig:
     hidden_channels: tuple[int, ...] = (64, 128)
     embedding_dim: int = 128
     margin: float = 1.0
-    delta_weight: float = 0.1
-    rom_weight: float = 0.3
+    delta_weight: float = 0.0
+    rom_weight: float = 2
     train_ratio: float = 0.8
     val_ratio: float = 0.1
     test_ratio: float = 0.1
@@ -202,6 +202,22 @@ def split_by_subject(
     return train_records, val_records, test_records
 
 
+# def build_template_tensor(
+#     records: list[dict], preprocessor: UIPRMDPreprocessor
+# ) -> torch.Tensor:
+#     correct_records = [r for r in records if int(r["label"]) == 0]
+#     if not correct_records:
+#         raise ValueError("No correct samples to build a template.")
+
+#     tensors = []
+#     for r in correct_records:
+#         aligned   = preprocessor.align_vicon_to_mediapipe(r["sequence"])
+#         processed = preprocessor.process(aligned)
+#         features  = build_features_from_aligned(processed)  # (12, T, 17)
+#         tensors.append(torch.from_numpy(features).float())
+
+#     return torch.stack(tensors, dim=0).mean(dim=0)
+
 def build_template_tensor(
     records: list[dict], preprocessor: UIPRMDPreprocessor
 ) -> torch.Tensor:
@@ -209,14 +225,18 @@ def build_template_tensor(
     if not correct_records:
         raise ValueError("No correct samples to build a template.")
 
-    tensors = []
-    for r in correct_records:
-        aligned   = preprocessor.align_vicon_to_mediapipe(r["sequence"])
-        processed = preprocessor.process(aligned)
-        features  = build_features_from_aligned(processed)  # (12, T, 17)
-        tensors.append(torch.from_numpy(features).float())
+    # 1. Find the record with the median raw frame length
+    # This guarantees we pick a squat performed at a "normal" human speed.
+    lengths = [len(r["sequence"]) for r in correct_records]
+    median_idx = int(np.argsort(lengths)[len(lengths) // 2])
+    best_record = correct_records[median_idx]
 
-    return torch.stack(tensors, dim=0).mean(dim=0)
+    # 2. Process ONLY this single, high-quality record
+    aligned   = preprocessor.align_vicon_to_mediapipe(best_record["sequence"])
+    processed = preprocessor.process(aligned)
+    features  = build_features_from_aligned(processed)  # (12, T, 17)
+
+    return torch.from_numpy(features).float()
 
 
 def _resample_to(arr: np.ndarray, target_T: int) -> np.ndarray:
@@ -239,79 +259,104 @@ def _resample_to(arr: np.ndarray, target_T: int) -> np.ndarray:
     return out.reshape(target_T, *original_trailing)
 
 
-def build_raw_xyz_template(records: list[dict], preprocessor: UIPRMDPreprocessor) -> torch.Tensor:
-    """
-    Build a template in RAW un-preprocessed XY coordinates for the overlay.
+# def build_raw_xyz_template(records: list[dict], preprocessor: UIPRMDPreprocessor) -> torch.Tensor:
+#     """
+#     Build a template in RAW un-preprocessed XY coordinates for the overlay.
 
-    WHY NOT align_vicon_to_mediapipe() / preprocessor.process():
-    -------------------------------------------------------------
-    align_vicon_to_mediapipe() subtracts the hip midpoint, putting output
-    in body-centred metric space — NOT [0,1] image fractions.
-    preprocessor.process() z-scores on top of that — even further off.
-    The ghost overlay needs image-fraction XY (matching MediaPipe output at
-    runtime) so joints map to the correct pixel positions.
+#     WHY NOT align_vicon_to_mediapipe() / preprocessor.process():
+#     -------------------------------------------------------------
+#     align_vicon_to_mediapipe() subtracts the hip midpoint, putting output
+#     in body-centred metric space — NOT [0,1] image fractions.
+#     preprocessor.process() z-scores on top of that — even further off.
+#     The ghost overlay needs image-fraction XY (matching MediaPipe output at
+#     runtime) so joints map to the correct pixel positions.
 
-    Coordinate source:
-    ------------------
-    For MediaPipe datasets, record["sequence"] already contains raw
-    image-fraction XY in shape (T, 17, 3) or flat (T, 51).  We use that.
-    For Vicon datasets (39-joint), image fractions are unavailable; we fall
-    back to body-centred coords — the overlay will be approximate.
+#     Coordinate source:
+#     ------------------
+#     For MediaPipe datasets, record["sequence"] already contains raw
+#     image-fraction XY in shape (T, 17, 3) or flat (T, 51).  We use that.
+#     For Vicon datasets (39-joint), image fractions are unavailable; we fall
+#     back to body-centred coords — the overlay will be approximate.
 
-    Variable-length fix:
-    --------------------
-    Sequences have different frame counts.  We resample every sequence to
-    the median length via linear interpolation before averaging, which fixes
-    the "stack expects each tensor to be equal size" RuntimeError.
+#     Variable-length fix:
+#     --------------------
+#     Sequences have different frame counts.  We resample every sequence to
+#     the median length via linear interpolation before averaging, which fixes
+#     the "stack expects each tensor to be equal size" RuntimeError.
 
-    Returns
-    -------
-    torch.Tensor  shape (3, T, J)
-        Ch 0,1 = image-fraction X, Y  (~[0,1]).
-        Ch 2   = Z / depth (not used for 2-D overlay).
-    """
+#     Returns
+#     -------
+#     torch.Tensor  shape (3, T, J)
+#         Ch 0,1 = image-fraction X, Y  (~[0,1]).
+#         Ch 2   = Z / depth (not used for 2-D overlay).
+#     """
+#     correct_records = [r for r in records if int(r["label"]) == 0]
+#     if not correct_records:
+#         raise ValueError("No correct samples to build raw XYZ template.")
+
+#     raw_list: list[np.ndarray] = []
+#     using_raw_image_fractions = True
+
+#     for r in correct_records:
+#         seq = np.asarray(r["sequence"], dtype=np.float32)
+
+#         if seq.ndim == 3 and seq.shape[1] == 17:
+#             # (T, 17, 3) — raw MediaPipe image-fraction XYZ
+#             raw_list.append(seq)
+#         elif seq.ndim == 2 and seq.shape[1] == 51:
+#             # (T, 51) flat MediaPipe → reshape to (T, 17, 3)
+#             raw_list.append(seq.reshape(seq.shape[0], 17, 3))
+#         else:
+#             # Vicon data (39-joint or flat): image fractions unavailable.
+#             # Use body-centred aligned coords as a best approximation.
+#             using_raw_image_fractions = False
+#             aligned = preprocessor.align_vicon_to_mediapipe(seq)  # (T, 17, 3)
+#             raw_list.append(aligned)
+
+#     if not using_raw_image_fractions:
+#         print(
+#             "  [warn] build_raw_xyz_template: dataset appears to be Vicon data "
+#             "(not MediaPipe image fractions).  Ghost overlay will use "
+#             "body-centred coordinates — joint positions will be approximate."
+#         )
+
+#     # Resample all sequences to the median frame count, then average.
+#     lengths = [a.shape[0] for a in raw_list]
+#     target_T = int(np.median(lengths))
+
+#     tensors: list[torch.Tensor] = []
+#     for seq_arr in raw_list:
+#         resampled = _resample_to(seq_arr, target_T)          # (target_T, 17, 3)
+#         xyz = np.transpose(resampled, (2, 0, 1)).copy()      # (3, target_T, 17)
+#         tensors.append(torch.from_numpy(xyz).float())
+
+#     return torch.stack(tensors, dim=0).mean(dim=0)           # (3, target_T, 17)
+
+def build_raw_xyz_template(
+    records: list[dict], preprocessor: UIPRMDPreprocessor
+) -> torch.Tensor:
     correct_records = [r for r in records if int(r["label"]) == 0]
     if not correct_records:
         raise ValueError("No correct samples to build raw XYZ template.")
 
-    raw_list: list[np.ndarray] = []
-    using_raw_image_fractions = True
+    # 1. Select the exact same median record
+    lengths = [len(r["sequence"]) for r in correct_records]
+    median_idx = int(np.argsort(lengths)[len(lengths) // 2])
+    best_record = correct_records[median_idx]
 
-    for r in correct_records:
-        seq = np.asarray(r["sequence"], dtype=np.float32)
+    seq = np.asarray(best_record["sequence"], dtype=np.float32)
 
-        if seq.ndim == 3 and seq.shape[1] == 17:
-            # (T, 17, 3) — raw MediaPipe image-fraction XYZ
-            raw_list.append(seq)
-        elif seq.ndim == 2 and seq.shape[1] == 51:
-            # (T, 51) flat MediaPipe → reshape to (T, 17, 3)
-            raw_list.append(seq.reshape(seq.shape[0], 17, 3))
-        else:
-            # Vicon data (39-joint or flat): image fractions unavailable.
-            # Use body-centred aligned coords as a best approximation.
-            using_raw_image_fractions = False
-            aligned = preprocessor.align_vicon_to_mediapipe(seq)  # (T, 17, 3)
-            raw_list.append(aligned)
+    # 2. Format it directly without temporal resampling/averaging
+    if seq.ndim == 3 and seq.shape[1] == 17:
+        raw_seq = seq
+    elif seq.ndim == 2 and seq.shape[1] == 51:
+        raw_seq = seq.reshape(seq.shape[0], 17, 3)
+    else:
+        raw_seq = preprocessor.align_vicon_to_mediapipe(seq)
 
-    if not using_raw_image_fractions:
-        print(
-            "  [warn] build_raw_xyz_template: dataset appears to be Vicon data "
-            "(not MediaPipe image fractions).  Ghost overlay will use "
-            "body-centred coordinates — joint positions will be approximate."
-        )
-
-    # Resample all sequences to the median frame count, then average.
-    lengths = [a.shape[0] for a in raw_list]
-    target_T = int(np.median(lengths))
-
-    tensors: list[torch.Tensor] = []
-    for seq_arr in raw_list:
-        resampled = _resample_to(seq_arr, target_T)          # (target_T, 17, 3)
-        xyz = np.transpose(resampled, (2, 0, 1)).copy()      # (3, target_T, 17)
-        tensors.append(torch.from_numpy(xyz).float())
-
-    return torch.stack(tensors, dim=0).mean(dim=0)           # (3, target_T, 17)
-
+    # Transpose to (3, T, J)
+    xyz = np.transpose(raw_seq, (2, 0, 1)).copy()
+    return torch.from_numpy(xyz).float()
 
 def collate_batch(batch: list[dict]) -> dict:
     templates = torch.stack([item["template"] for item in batch], dim=0)
@@ -645,8 +690,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--embedding-dim",    type=int,   default=128)
     parser.add_argument("--hidden-channels",  type=int,   nargs="*", default=[64, 128])
     parser.add_argument("--margin",           type=float, default=1.0)
-    parser.add_argument("--delta-weight",     type=float, default=0.1)
-    parser.add_argument("--rom-weight",       type=float, default=0.3)
+    parser.add_argument("--delta-weight",     type=float, default=0)
+    parser.add_argument("--rom-weight",       type=float, default=2.0)
     parser.add_argument("--train-ratio",      type=float, default=0.8)
     parser.add_argument("--val-ratio",        type=float, default=0.1)
     parser.add_argument("--test-ratio",       type=float, default=0.1)

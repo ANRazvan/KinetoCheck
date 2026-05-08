@@ -1,1 +1,0 @@
-# Pyramid STGAT model definition

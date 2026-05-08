@@ -1,3 +1,0 @@
-from .intellirehab_factory import IntelliRehabTrainingFactory
-from .intellirehab_2d_factory import IntelliRehab2DTrainingFactory
-from .uiprmd_factory import UIPRMDTrainingFactory

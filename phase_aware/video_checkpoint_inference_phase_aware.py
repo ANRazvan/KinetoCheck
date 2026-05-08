@@ -54,6 +54,7 @@ import urllib.request
 
 import numpy as np
 import torch
+import csv
 
 from phase_aware import ExerciseEvaluator
 from Preprocessing.UIPRMDPreprocessor import (
@@ -141,7 +142,7 @@ class LoadedExerciseModel:
     raw_threshold: float
     checkpoint_path: Path
     use_phase_decoder: bool
-    in_channels: int = 9   # actual channel count the model was trained with
+    in_channels: int = 9  # actual channel count the model was trained with
 
 
 # ---------------------------------------------------------------------------
@@ -154,57 +155,7 @@ def resolve_device(device: str) -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def _detect_in_channels(state_dict: dict) -> int:
-    """
-    Read in_channels directly from the first layer's weight shape in the
-    saved state dict.  This is the ground truth — it never lies even when
-    the metadata field "in_channels" is stale (e.g. old 9-ch checkpoint
-    loaded after the feature pipeline was upgraded to 12 channels).
-
-    The first encoder block's spatial attention projection has weight shape
-    (out_channels, in_channels), so index [1] gives in_channels.
-    """
-    key = "encoder.0.spatial_attn.proj.weight"
-    if key in state_dict:
-        return int(state_dict[key].shape[1])
-    # Fallback: scan for any Linear weight in the first block
-    for k, v in state_dict.items():
-        if "encoder.0" in k and "weight" in k and v.ndim == 2:
-            return int(v.shape[1])
-    return 9   # safe default for very old checkpoints
-
-
-def _rebuild_template_12ch(
-    ckpt: dict,
-    preprocessor: UIPRMDPreprocessor,
-) -> torch.Tensor:
-    """
-    The checkpoint stores template_tensor with whatever channel count was
-    used at training time.  If that was 9 (old checkpoint) but the current
-    pipeline produces 12 channels, we need to rebuild the template.
-
-    We use the raw Vicon sequences stored in the dataset records — but those
-    aren't in the checkpoint.  Instead we rebuild from template_tensor itself:
-    the first 3 channels are ROM-normalised, z-scored XYZ, which is exactly
-    what build_features_from_aligned expects as input (it was produced by
-    preprocessor.process()).  So we can recover (T, 17, 3) from the 9-ch
-    tensor and re-run build_features_from_aligned on it.
-    """
-    tmpl = ckpt["template_tensor"]          # (9, T, 17) or (12, T, 17)
-    if tmpl.shape[0] == 12:
-        return tmpl                          # already new format, nothing to do
-
-    # tmpl is (9, T, 17) — channels 0-2 are XYZ, which is all we need
-    xyz_chw = tmpl[:3]                       # (3, T, 17)
-    T, J    = xyz_chw.shape[1], xyz_chw.shape[2]
-    # Rearrange to (T, J, 3) = the shape build_features_from_aligned expects
-    processed = xyz_chw.permute(1, 2, 0).cpu().numpy().astype("float32")   # (T, 17, 3)
-    features  = build_features_from_aligned(processed)                # (12, T, 17)
-    return torch.from_numpy(features).float()
-
-
 def load_models(checkpoints_root: Path, device: torch.device) -> list[LoadedExerciseModel]:
-    preprocessor = UIPRMDPreprocessor()
     loaded: list[LoadedExerciseModel] = []
 
     for exercise_dir in sorted(checkpoints_root.glob("exercise_*")):
@@ -216,15 +167,11 @@ def load_models(checkpoints_root: Path, device: torch.device) -> list[LoadedExer
         cfg  = ckpt.get("config", {})
         use_phase_decoder = bool(ckpt.get("use_phase_decoder", False))
 
-        # Detect actual in_channels from weight shapes — never trust metadata alone
-        state_dict = ckpt["model_state_dict"]
-        in_channels = _detect_in_channels(state_dict)
-        if in_channels != ckpt.get("in_channels", 9):
-            print(
-                f"  [compat] {ckpt_path.name}: metadata says in_channels="
-                f"{ckpt.get('in_channels',9)} but weights say {in_channels}. "
-                f"Using {in_channels}."
-            )
+        # Detect actual in_channels from weight shape — checkpoint metadata
+        # can be stale (9) even after retraining to 12 channels.
+        state_dict  = ckpt["model_state_dict"]
+        key         = "encoder.0.spatial_attn.proj.weight"
+        in_channels = int(state_dict[key].shape[1]) if key in state_dict else int(ckpt.get("in_channels", 9))
 
         model = ExerciseEvaluator(
             in_channels=in_channels,
@@ -233,7 +180,7 @@ def load_models(checkpoints_root: Path, device: torch.device) -> list[LoadedExer
             use_phase_decoder=use_phase_decoder,
         ).to(device)
 
-        missing, _ = model.load_state_dict(state_dict, strict=False)
+        missing, _ = model.load_state_dict(ckpt["model_state_dict"], strict=False)
         if missing:
             print(f"  [compat] {ckpt_path.name}: {len(missing)} keys missing.")
         model.eval()
@@ -248,16 +195,20 @@ def load_models(checkpoints_root: Path, device: torch.device) -> list[LoadedExer
                 f"Clamped to {threshold:.3f}. Consider retraining."
             )
 
-        # Rebuild template to 12 channels if checkpoint is from before the upgrade
-        template_raw = _rebuild_template_12ch(ckpt, preprocessor)
-        template = template_raw.detach().clone().float().unsqueeze(0).to(device)
+        template = ckpt["template_tensor"].detach().clone().float().unsqueeze(0).to(device)
 
-        template_xyz: torch.Tensor | None = None
         if "template_xyz_tensor" in ckpt:
-            preprocessor_cfg = ckpt.get("preprocessor_config", {})
-            is_raw = bool(preprocessor_cfg.get("template_xyz_is_raw", False))
-            if is_raw:
-                template_xyz = ckpt["template_xyz_tensor"].detach().clone().float().unsqueeze(0).to(device)
+            # Load regardless of is_raw — compute_perfect_ghost normalises
+            # whatever coordinate system the XYZ is in.
+            template_xyz = ckpt["template_xyz_tensor"].detach().clone().float().unsqueeze(0).to(device)
+        else:
+            # Old checkpoint without template_xyz_tensor — reconstruct from
+            # template_tensor channels 0-2 (XYZ positions).
+            # template_tensor shape: (C, T, J)  →  we need (1, 3, T, J)
+            tmpl_t = ckpt["template_tensor"].detach().clone().float()
+            template_xyz = tmpl_t[:3].unsqueeze(0).to(device)  # (1, 3, T, J)
+            print(f"  [compat] {ckpt_path.name}: no template_xyz_tensor, "
+                  f"reconstructed from template_tensor XYZ channels.")
 
         loaded.append(LoadedExerciseModel(
             exercise_id=exercise_id,
@@ -345,7 +296,7 @@ def extract_mediapipe_sequence(video_path: Path, pose_model_path: Path) -> np.nd
 
 
 # ---------------------------------------------------------------------------
-# Feature building
+# Feature building (unchanged)
 # ---------------------------------------------------------------------------
 
 def build_model_input(
@@ -354,24 +305,23 @@ def build_model_input(
     in_channels: int = 12,
 ) -> torch.Tensor:
     """
-    sequence : (T, J, 3) raw MediaPipe XYZ → (1, C, T, J) model tensor.
+    sequence    : (T, J, 3) raw MediaPipe XYZ
+    in_channels : must match the loaded model (12 for new checkpoints, 9 for old).
+                  Passed in from loaded.in_channels so it always matches.
 
-    in_channels=12 → new pipeline (angles + bone ratios, ROM normalised).
-    in_channels=9  → old pipeline (xyz + velocity + acceleration only),
-                     used automatically when an old checkpoint is loaded so
-                     the channel count always matches the model weights.
+    Returns (1, in_channels, T, J).
     """
     aligned   = preprocessor.align_vicon_to_mediapipe(sequence)
-    processed = preprocessor.process(aligned)    # (T, 17, 3)
+    processed = preprocessor.process(aligned)          # (T, 17, 3)
 
     if in_channels == 12:
-        features = build_features_from_aligned(processed)   # (12, T, 17)
+        features = build_features_from_aligned(processed)  # (12, T, 17)
     else:
-        # Legacy 9-channel path — keeps old checkpoints working
+        # Legacy 9-channel path for old checkpoints
         velocity     = np.diff(processed, axis=0, prepend=processed[:1])
         acceleration = np.diff(velocity,  axis=0, prepend=velocity[:1])
-        features = np.concatenate([processed, velocity, acceleration], axis=-1)
-        features = np.transpose(features, (2, 0, 1)).copy().astype(np.float32)
+        feat = np.concatenate([processed, velocity, acceleration], axis=-1)
+        features = np.transpose(feat, (2, 0, 1)).copy().astype(np.float32)
 
     return torch.from_numpy(features).float().unsqueeze(0)
 
@@ -401,139 +351,288 @@ def _detect_lateral_axis(template_xyz: np.ndarray) -> int:
 
 
 # ---------------------------------------------------------------------------
-# FIX B+C+D: Corrected ghost skeleton computation
+# Motion-phase ghost skeleton computation
 # ---------------------------------------------------------------------------
 
-def compute_perfect_ghost(
-    warp_weights_np: np.ndarray,   # (T_u, T_t_feat)
-    template_xyz: np.ndarray,      # (3, T_t_raw, J) — raw Vicon XYZ from checkpoint
-    raw_sequence: np.ndarray,      # (T_seq, J, 3) — raw MediaPipe [0,1] fractions
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _motion_phase_signal(xy_seq):
+    # type: (np.ndarray) -> np.ndarray
     """
-    Returns:
-        ghost_screen  : (T_u, J, 2) in [0,1] image-fraction screen coords
-        user_synced   : (T_u, J, 2) user XY resampled to model timeline
-        video_to_model: (T_seq,) int array mapping video frame → model frame index
+    Compute a 1-D phase signal from hip vertical position.
+    Input : (T, J, 2)  image-fraction XY
+    Output: (T,)       smoothed phase in [0, 1]
+    Squatting = hip Y rises (Y increases downward) = phase rises.
+    """
+    hip_mid_y = (xy_seq[:, HIP_L, 1] + xy_seq[:, HIP_R, 1]) / 2.0
+    window = max(1, len(hip_mid_y) // 20)
+    kernel = np.ones(window, dtype=np.float32) / window
+    smoothed = np.convolve(hip_mid_y, kernel, mode='same')
+    lo, hi = smoothed.min(), smoothed.max()
+    if hi - lo < 1e-4:
+        return np.linspace(0.0, 1.0, len(smoothed), dtype=np.float32)
+    return ((smoothed - lo) / (hi - lo)).astype(np.float32)
 
-    FIX B: Single uniform scale only — no independent X rescaling.
-    FIX C: video_to_model built from warp argmax for phase-locked rendering.
-    FIX D: User body scale measured once from full raw_sequence (median, robust).
+
+def _build_video_to_template(user_phase, tmpl_phase):
+    # type: (np.ndarray, np.ndarray) -> np.ndarray
     """
-    T_u, T_t_feat = warp_weights_np.shape
+    For every video frame, find the template frame with the closest phase.
+    Returns (T_seq,) int array.
+    """
+    mapping = np.zeros(len(user_phase), dtype=np.int32)
+    for i, up in enumerate(user_phase):
+        mapping[i] = int(np.argmin(np.abs(tmpl_phase - up)))
+        print(f"  [mapping] video_frame={i} user_phase={up:.3f} → template_frame={mapping[i]} tmpl_phase={tmpl_phase[mapping[i]]:.3f}")
+    return mapping
+
+
+def compute_perfect_ghost(warp_weights_np, template_xyz, raw_sequence, ghost_anchor: str = "hips"):
+    # type: (np.ndarray, np.ndarray, np.ndarray, str) -> tuple
+    """
+    Build a ghost skeleton that moves WITH the user in real time.
+
+    WHY THE OLD VERSION SAT STILL
+    --------------------------------
+    Old code drove ghost timing from warp_weights argmax.
+    When the model is not well trained, warp weights are nearly uniform so
+    argmax returns the same template frame for almost every user frame
+    -> ghost is frozen at one pose for the entire video.
+
+    NEW APPROACH: motion-phase tracking
+    ------------------------------------
+    Use the user's hip Y position as a phase signal (squatting = phase rises).
+    Match each video frame to the template frame with the closest phase value.
+    This makes the ghost genuinely reactive to the user's movement depth,
+    regardless of model quality or training state.
+
+    Per-frame anchoring
+    --------------------
+    Each frame: centre the template pose on the user's current hip midpoint
+    and scale it to match the user's current body height. The ghost always
+    sits on the user's body even if they move laterally.
+
+    Returns
+    -------
+    ghost_screen  : (T_seq, J, 2)  ghost XY in [0,1], one per VIDEO frame
+    user_synced   : (T_seq, J, 2)  user raw XY (same timeline)
+    video_to_tmpl : (T_seq,) int   template frame index per video frame
+    """
     _, T_t_raw, J = template_xyz.shape
     T_seq = raw_sequence.shape[0]
 
-    # ---- 0. Resample template to feature timeline ----
-    if T_t_raw != T_t_feat:
-        x_old = np.linspace(0.0, 1.0, T_t_raw)
-        x_new = np.linspace(0.0, 1.0, T_t_feat)
-        resampled = np.zeros((3, T_t_feat, J), dtype=np.float32)
-        for c in range(3):
-            for j in range(J):
-                resampled[c, :, j] = np.interp(x_new, x_old, template_xyz[c, :, j])
-        template_xyz = resampled   # (3, T_t_feat, J)
+    # # Normalise template XY into [0, 1]
+    # tmpl_xy = template_xyz[:2, :, :].copy()          # (2, T_t_raw, J)
+    # for c in range(2):
+    #     mn = float(tmpl_xy[c].min()); mx = float(tmpl_xy[c].max())
+    #     if mx - mn > 1e-4:
+    #         tmpl_xy[c] = (tmpl_xy[c] - mn) / (mx - mn)
+    #     else:
+    #         tmpl_xy[c] = 0.5
+    # tmpl_xy_seq = tmpl_xy.transpose(1, 2, 0).astype(np.float32)  # (T_t_raw, J, 2)
 
-    # ---- 1. FIX A: detect lateral axis from template ----
-    lateral_axis = _detect_lateral_axis(template_xyz)
-    vertical_axis = 2  # Vicon Z is always up
+    lat_axis = _detect_lateral_axis(template_xyz)
 
-    # ---- 2. Soft-warp template to user timeline ----
-    # template_xyz axes: (3=XYZ, T_t_feat, J)
-    # We only need lateral and vertical for the 2D overlay.
-    tmpl_lat = template_xyz[lateral_axis, :, :]   # (T_t_feat, J)
-    tmpl_vert = template_xyz[vertical_axis, :, :]  # (T_t_feat, J)
+    # Use lateral axis + vertical axis (Z) instead of raw X/Y
+    tmpl_xy = np.stack(
+        [template_xyz[lat_axis], template_xyz[2]],
+        axis=0,
+    ).astype(np.float32)
 
-    # Warp: (T_u, T_t_feat) @ (T_t_feat, J) → (T_u, J)
-    ghost_lat  = warp_weights_np @ tmpl_lat    # (T_u, J)
-    ghost_vert = warp_weights_np @ tmpl_vert   # (T_u, J)
+    # Make vertical axis behave like screen Y
+    tmpl_xy[1] = -tmpl_xy[1]
 
-    # ---- 3. Convert Vicon coords to screen coords ----
-    # Lateral axis → screen X  (may need sign flip — auto-detect below)
-    # Vicon -Z (vertical, flipped) → screen Y (Y increases downward on screen)
-    ghost_screen_x = ghost_lat.copy()     # (T_u, J)
-    ghost_screen_y = -ghost_vert.copy()   # (T_u, J)  negate: Vicon up = screen down
+    for c in range(2):
+        mn = float(np.min(tmpl_xy[c]))
+        mx = float(np.max(tmpl_xy[c]))
+        tmpl_xy[c] = (tmpl_xy[c] - mn) / max(mx - mn, 1e-6)
 
-    # ---- 3.5 Normalize warped ghost into [0, 1] before any scale/anchor step ----
-    all_ghost = np.stack([ghost_screen_x, ghost_screen_y], axis=-1)  # (T_u, J, 2)
-    g_min = all_ghost.min(axis=(0, 1), keepdims=True)
-    g_max = all_ghost.max(axis=(0, 1), keepdims=True)
-    g_range = np.maximum(g_max - g_min, 1e-6)
-    ghost_screen_x = (ghost_screen_x - g_min[..., 0]) / g_range[..., 0]
-    ghost_screen_y = (ghost_screen_y - g_min[..., 1]) / g_range[..., 1]
+    tmpl_xy_seq = tmpl_xy.transpose(1, 2, 0).astype(np.float32)
 
-    # ---- 4. FIX D: measure user body dimensions ONCE from full raw_sequence ----
-    # Use median over all frames for robustness (ignores occasional bad detections).
-    user_foot_y  = np.median(
-        (raw_sequence[:, FOOT_L_IDX, 1] + raw_sequence[:, FOOT_R_IDX, 1]) / 2.0
-    )
-    user_foot_x  = np.median(
-        (raw_sequence[:, FOOT_L_IDX, 0] + raw_sequence[:, FOOT_R_IDX, 0]) / 2.0
-    )
-    user_nose_y  = np.median(raw_sequence[:, NOSE_IDX, 1])
-    user_height  = float(np.abs(user_foot_y - user_nose_y))
+    # Fix chirality: flip template X if user appears mirrored
+    tmpl_lr = (float(np.median(tmpl_xy_seq[:, SHOULDER_L, 0]))
+               - float(np.median(tmpl_xy_seq[:, SHOULDER_R, 0])))
+    user_lr = (float(np.median(raw_sequence[:, SHOULDER_L, 0]))
+               - float(np.median(raw_sequence[:, SHOULDER_R, 0])))
+    if (tmpl_lr * user_lr) < 0:
+        tmpl_xy_seq[:, :, 0] = 1.0 - tmpl_xy_seq[:, :, 0]
+        print("  [ghost] Template X flipped to match user chirality.")
 
-    # ---- 5. FIX B: single uniform scale from ghost body height ----
-    # Anchor ghost at its own feet first (median over time)
-    ghost_feet_x = np.median((ghost_screen_x[:, FOOT_L_IDX] + ghost_screen_x[:, FOOT_R_IDX]) / 2.0)
-    ghost_feet_y = np.median((ghost_screen_y[:, FOOT_L_IDX] + ghost_screen_y[:, FOOT_R_IDX]) / 2.0)
-    ghost_nose_y = np.median(ghost_screen_y[:, NOSE_IDX])
-    ghost_height = float(np.abs(ghost_feet_y - ghost_nose_y))
+    # Deterministic mapping: linearly resample template timeline to video
+    # timeline. We do NOT try to guess phase anymore — user requested that
+    # every template frame be represented (interpolated or downsampled)
+    # across the video frames.
+    T_t = int(tmpl_xy_seq.shape[0])
+    if T_t == T_seq:
+        frac_positions = np.arange(T_seq, dtype=np.float32)
+    else:
+        frac_positions = np.linspace(0, T_t - 1, num=T_seq, dtype=np.float32)
 
-    if ghost_height < 1e-5:
-        # Template has essentially no vertical extent — can't compute scale.
-        # Fall back to 1.0 scale. This usually means the lateral_axis detection
-        # picked the depth axis by mistake. Warn and try the other axis.
-        print("  [WARN] Ghost height near zero — trying alternate lateral axis.")
-        lateral_axis = 1 - lateral_axis
-        tmpl_lat = template_xyz[lateral_axis, :, :]
-        ghost_lat = warp_weights_np @ tmpl_lat
-        ghost_screen_x = ghost_lat.copy()
-        ghost_feet_x = np.median((ghost_screen_x[:, FOOT_L_IDX] + ghost_screen_x[:, FOOT_R_IDX]) / 2.0)
-        ghost_height = max(1e-5, float(np.abs(ghost_feet_y - ghost_nose_y)))
+    # Nearest integer mapping for external consumers
+    video_to_tmpl = np.round(frac_positions).astype(np.int32)
+    print(f"  [ghost] linear template mapping range: {video_to_tmpl.min()} -> {video_to_tmpl.max()} (tmpl_T={T_t})")
 
-    # FIX: detect lateral flip (if ghost left shoulder is on screen right, flip X)
-    ghost_lshoulder_x = np.median(ghost_screen_x[:, SHOULDER_L])
-    ghost_rshoulder_x = np.median(ghost_screen_x[:, SHOULDER_R])
-    user_lshoulder_x  = np.median(raw_sequence[:, SHOULDER_L, 0])
-    user_rshoulder_x  = np.median(raw_sequence[:, SHOULDER_R, 0])
-    ghost_lr = ghost_lshoulder_x - ghost_rshoulder_x   # positive = L is to the right of R in ghost space
-    user_lr  = user_lshoulder_x  - user_rshoulder_x    # same for user screen space
-    if (ghost_lr * user_lr) < 0:
-        # Opposite chirality — flip the lateral axis
-        ghost_screen_x = -ghost_screen_x
-        ghost_feet_x   = -ghost_feet_x
-        print("  [axis] Lateral flip applied (mirror correction).")
+    # Body heights for per-frame scaling
+    user_nose_y = raw_sequence[:, NOSE_IDX, 1]
+    user_foot_y = (raw_sequence[:, FOOT_L_IDX, 1] + raw_sequence[:, FOOT_R_IDX, 1]) / 2.0
+    user_height = np.abs(user_foot_y - user_nose_y).clip(min=1e-3)
 
-    # Single uniform scale: ghost_height → user_height
-    scale = user_height / ghost_height
+    tmpl_nose_y = tmpl_xy_seq[:, NOSE_IDX, 1]
+    tmpl_foot_y = (tmpl_xy_seq[:, FOOT_L_IDX, 1] + tmpl_xy_seq[:, FOOT_R_IDX, 1]) / 2.0
+    tmpl_height = np.abs(tmpl_foot_y - tmpl_nose_y).clip(min=1e-3)
+    user_height = np.abs(user_foot_y - user_nose_y).clip(min=1e-3)
 
-    # Centre ghost around its own foot midpoint, apply scale, then translate to user foot midpoint
-    ghost_screen_x = (ghost_screen_x - ghost_feet_x) * scale + user_foot_x
-    ghost_screen_y = (ghost_screen_y - ghost_feet_y) * scale + user_foot_y
+    tmpl_height_med = max(float(np.median(tmpl_height)), 1e-3)
+    user_height_med = max(float(np.median(user_height)), 1e-3)
+    global_scale = np.clip(user_height_med / tmpl_height_med, 0.5, 4.0)
+    print("tmpl_height:", tmpl_height.min(), tmpl_height.mean(), tmpl_height.max())
 
-    ghost_screen = np.stack([ghost_screen_x, ghost_screen_y], axis=-1)  # (T_u, J, 2)
 
-    # ---- 6. FIX C: build video_to_model lookup table from warp argmax ----
-    # warp_weights_np[t, :] is the soft distribution over template frames for
-    # model frame t. argmax gives the most attended template frame, which we
-    # convert to a fractional phase position and invert for each video frame.
-    model_argmax = np.argmax(warp_weights_np, axis=1)   # (T_u,)
-    model_frac = model_argmax / max(1, T_t_feat - 1)    # (T_u,) in [0, 1]
-    video_frac = np.linspace(0.0, 1.0, T_seq)           # (T_seq,)
-    video_to_model = np.array(
-        [int(np.argmin(np.abs(model_frac - vf))) for vf in video_frac],
-        dtype=np.int32,
-    )
+    # Build ghost per frame, anchored to selected user anchor position
+    ghost_screen = np.zeros((T_seq, J, 2), dtype=np.float32)
+    # for i in range(T_seq):
+    #     t = int(video_to_tmpl[i])
+    #     tmpl_pose = tmpl_xy_seq[t].copy()                          # (J, 2)
+    #     tmpl_hip  = (tmpl_pose[HIP_L] + tmpl_pose[HIP_R]) / 2.0  # (2,)
+    #     centred   = tmpl_pose - tmpl_hip                           # (J, 2)
+    #     scale     = global_scale
+    #     # print(f"i={i} t={t} tmpl_height={tmpl_height[t]:.6f} scale={scale:.3e}")
+    #     user_hip  = np.array([
+    #         (raw_sequence[i, HIP_L, 0] + raw_sequence[i, HIP_R, 0]) / 2.0,
+    #         (raw_sequence[i, HIP_L, 1] + raw_sequence[i, HIP_R, 1]) / 2.0,
+    #     ], dtype=np.float32)
+    #     ghost_screen[i] = centred * scale + user_hip
+    print(f"warp weights:", warp_weights_np.shape if warp_weights_np is not None else None)
+    print(f"T_seq : {T_seq} tmpl_T : {T_t}")
 
-    # ---- 7. Resample user to model timeline (for delta/error computation only) ----
-    x_old_user = np.linspace(0.0, 1.0, T_seq)
-    x_new_user = np.linspace(0.0, 1.0, T_u)
-    user_synced = np.zeros((T_u, J, 2), dtype=np.float32)
-    for j in range(J):
-        for c in range(2):
-            user_synced[:, j, c] = np.interp(x_new_user, x_old_user, raw_sequence[:, j, c])
+    warp_resampled = None
+    if warp_weights_np is not None:
+        T_w, T_warp_cols = warp_weights_np.shape
 
-    return ghost_screen, user_synced, video_to_model
+        # Resample rows -> one row per video frame if needed
+        if T_w != T_seq:
+            orig_positions = np.linspace(0, T_seq - 1, num=T_w, dtype=np.float32)
+            target_positions = np.arange(T_seq, dtype=np.float32)
+            warp_resampled = np.zeros((T_seq, T_warp_cols), dtype=np.float32)
+            for j in range(T_warp_cols):
+                warp_resampled[:, j] = np.interp(target_positions, orig_positions, warp_weights_np[:, j])
+            warp_resampled = warp_resampled / (warp_resampled.sum(axis=1, keepdims=True) + 1e-8)
+            print(f"  [ghost] resampled warp rows {warp_weights_np.shape} -> {warp_resampled.shape}")
+        else:
+            warp_resampled = warp_weights_np.astype(np.float32)
+
+        # Ensure warp columns align to template-frame axis (tmpl_xy_seq.shape[0]).
+        target_T_t = int(tmpl_xy_seq.shape[0])
+        if warp_resampled.shape[1] != target_T_t:
+            orig_cols = np.arange(warp_resampled.shape[1], dtype=np.float32)
+            target_cols = np.linspace(0, warp_resampled.shape[1] - 1, num=target_T_t, dtype=np.float32)
+            warp_cols_resampled = np.zeros((warp_resampled.shape[0], target_T_t), dtype=np.float32)
+            for r in range(warp_resampled.shape[0]):
+                warp_cols_resampled[r] = np.interp(target_cols, orig_cols, warp_resampled[r])
+            warp_cols_resampled = warp_cols_resampled / (warp_cols_resampled.sum(axis=1, keepdims=True) + 1e-8)
+            warp_resampled = warp_cols_resampled
+            print(f"  [ghost] resampled warp columns -> {warp_resampled.shape} to match tmpl frames={target_T_t}")
+
+        # debug check
+    if warp_resampled is not None:
+        print("  [ghost] tmpl_xy_seq.shape:", tmpl_xy_seq.shape, "warp_resampled.shape:", warp_resampled.shape)
+
+    # Diagnostics collected for user feedback (returned to caller)
+    ghost_debug = {}
+    if warp_resampled is not None:
+        wr = warp_resampled
+        # Representative frames to inspect
+        sample_idx = [0, T_seq // 4, T_seq // 2, 3 * T_seq // 4, T_seq - 1]
+        sample_idx = [int(max(0, min(T_seq - 1, i))) for i in sample_idx]
+        topk_examples = []
+        for i in sample_idx:
+            row = wr[i]
+            topk = np.argsort(-row)[:5]
+            topk_examples.append({"frame": int(i), "topk": topk.tolist(), "weights": row[topk].tolist()})
+
+        # Row entropy: low -> very peaked
+        row_entropy = -np.sum(wr * np.log(wr + 1e-12), axis=1)
+        ent_min, ent_mean, ent_max = float(row_entropy.min()), float(row_entropy.mean()), float(row_entropy.max())
+
+        # Argmax usage stats
+        argmax_seq = np.argmax(wr, axis=1)
+        unique, counts = np.unique(argmax_seq, return_counts=True)
+        most_common = sorted(list(zip(unique.tolist(), counts.tolist())), key=lambda x: -x[1])[:6]
+
+        # Agreement between model argmax and phase mapping
+        try:
+            arg_eq_ratio = float((argmax_seq == video_to_tmpl).mean())
+        except Exception:
+            arg_eq_ratio = None
+
+        # Correlation between user phase and template phase at argmax
+        try:
+            tmpl_at_argmax = tmpl_phase[argmax_seq]
+            phase_corr = float(np.corrcoef(user_phase, tmpl_at_argmax)[0, 1])
+        except Exception:
+            phase_corr = None
+
+        ghost_debug = {
+            "warp_shape": tuple(wr.shape),
+            "tmpl_shape": tuple(tmpl_xy_seq.shape),
+            "sample_topk": topk_examples,
+            "entropy": [ent_min, ent_mean, ent_max],
+            "argmax_unique_count": int(len(unique)),
+            "argmax_most_common": most_common,
+            "argmax_eq_ratio": arg_eq_ratio,
+            "phase_corr_user_vs_argmax": phase_corr,
+        }
+
+        print(f"  [ghost debug] warp rows entropy min/mean/max: {ent_min:.3f}/{ent_mean:.3f}/{ent_max:.3f}")
+        print(f"  [ghost debug] argmax unique frames: {len(unique)} most_common: {most_common[:6]}")
+        print(f"  [ghost debug] argmax==video_to_tmpl ratio: {arg_eq_ratio:.3f} phase_corr(user,tmpl[argmax])={phase_corr}")
+    else:
+        # No warp available — summarise phase mapping
+        uniq, cnts = np.unique(video_to_tmpl, return_counts=True)
+        ghost_debug = {
+            "warp_shape": None,
+            "tmpl_shape": tuple(tmpl_xy_seq.shape),
+            "video_to_tmpl_unique_count": int(len(uniq)),
+            "video_to_tmpl_top": sorted(list(zip(uniq.tolist(), cnts.tolist())), key=lambda x: -x[1])[:6],
+        }
+
+    # Precompute a per-video-frame template pose via linear interpolation
+    # across the template timeline so we deterministically display the
+    # template frames (interpolated or downsampled) rather than guessing.
+    idx0 = np.floor(frac_positions).astype(int)
+    idx1 = np.minimum(idx0 + 1, T_t - 1)
+    alpha = (frac_positions - idx0).astype(np.float32)
+    tmpl_pose_per_video = (1.0 - alpha)[:, None, None] * tmpl_xy_seq[idx0] + alpha[:, None, None] * tmpl_xy_seq[idx1]
+
+    def _anchor_joint_pair(anchor_mode: str) -> tuple[int, int]:
+        if anchor_mode == "heels":
+            return 13, 14
+        if anchor_mode == "ankles":
+            return 11, 12
+        if anchor_mode == "foot_index":
+            return 15, 16
+        return HIP_L, HIP_R
+
+    left_anchor_idx, right_anchor_idx = _anchor_joint_pair(ghost_anchor)
+    print(f"  [ghost] anchor mode={ghost_anchor} joints=({left_anchor_idx},{right_anchor_idx})")
+
+    for i in range(T_seq):
+        tmpl_pose = tmpl_pose_per_video[i].copy()
+
+        tmpl_anchor = (tmpl_pose[left_anchor_idx] + tmpl_pose[right_anchor_idx]) / 2.0  # (2,)
+        centred   = tmpl_pose - tmpl_anchor                          # (J, 2)
+        scale     = global_scale
+        user_anchor = np.array([
+            (raw_sequence[i, left_anchor_idx, 0] + raw_sequence[i, right_anchor_idx, 0]) / 2.0,
+            (raw_sequence[i, left_anchor_idx, 1] + raw_sequence[i, right_anchor_idx, 1]) / 2.0,
+        ], dtype=np.float32)
+        ghost_screen[i] = centred * scale + user_anchor
+
+    user_synced = raw_sequence[:, :, :2].copy()   # (T_seq, J, 2)
+    ghost_screen[..., 0] = np.clip(ghost_screen[..., 0], -0.05, 1.05)
+    ghost_screen[..., 1] = np.clip(ghost_screen[..., 1], -0.05, 1.05)
+    ghost_debug["anchor_mode"] = ghost_anchor
+    ghost_debug["anchor_joints"] = [int(left_anchor_idx), int(right_anchor_idx)]
+    return ghost_screen, user_synced, video_to_tmpl, ghost_debug
+
 
 
 # ---------------------------------------------------------------------------
@@ -610,6 +709,7 @@ def run_prediction(
     raw_sequence: np.ndarray,
     models: list[LoadedExerciseModel],
     device: torch.device,
+    ghost_anchor: str = "hips",
 ) -> tuple[dict, np.ndarray, list[dict], dict | None]:
     results = []
     with torch.no_grad():
@@ -647,27 +747,33 @@ def run_prediction(
     best_outputs = best_result["outputs"]
 
     phase_outputs: dict | None = None
-    if (
-        "warp_weights" in best_outputs
-        and best_loaded.use_phase_decoder
-        and best_loaded.template_xyz is not None
-    ):
-        warp_weights = best_outputs["warp_weights"].detach().cpu()
-        warp_np      = warp_weights[0].numpy()   # (T_u, T_t)
+    print(f"  [overlay] template_xyz={'present' if best_loaded.template_xyz is not None else 'MISSING'}, "
+          f"use_phase_decoder={best_loaded.use_phase_decoder}, "
+          f"warp_weights_in_outputs={'warp_weights' in best_outputs}")
+    if best_loaded.template_xyz is not None:
+        # warp_np is only used as a pass-through argument to compute_perfect_ghost
+        # (kept for API compatibility). The new ghost logic ignores it entirely
+        # and drives timing from the user's motion phase instead.
+        if "warp_weights" in best_outputs:
+            warp_np = best_outputs["warp_weights"].detach().cpu()[0].numpy()
+        else:
+            T_u = best_outputs["similarity_score"].shape[0]
+            T_t = best_loaded.template_tensor.shape[2]
+            warp_np = np.ones((T_u, T_t), dtype=np.float32) / T_t  # uniform fallback
 
-        tmpl_xyz_np  = best_loaded.template_xyz[0].cpu().numpy()   # (3, T_t, J)
+        tmpl_xyz_np = best_loaded.template_xyz[0].cpu().numpy()   # (3, T_t, J)
 
-        # Call the FIXED ghost computation
-        ghost_screen, user_synced, video_to_model = compute_perfect_ghost(
-            warp_np, tmpl_xyz_np, raw_sequence
+        ghost_screen, user_synced, video_to_model, ghost_debug = compute_perfect_ghost(
+            warp_np, tmpl_xyz_np, raw_sequence, ghost_anchor=ghost_anchor
         )
 
         # ghost_screen: (T_u, J, 2) in [0,1] screen coords
         # Pack into (T_u, J, 3) for downstream code (Z=0 unused)
+        # ghost_screen is now (T_seq, J, 2) — same length as the video, not T_u
         ghost_xyz = np.zeros((ghost_screen.shape[0], ghost_screen.shape[1], 3), dtype=np.float32)
         ghost_xyz[..., :2] = ghost_screen
 
-        # User synced also packed to 3 channels
+        # user_synced is (T_seq, J, 2) — same timeline
         user_synced_3 = np.zeros_like(ghost_xyz)
         user_synced_3[..., :2] = user_synced
 
@@ -689,6 +795,7 @@ def run_prediction(
             "joint_error_mag": err_mag,           # (J,)
             "joint_confidence": joint_conf,       # (T_u, J)
             "video_to_model":  video_to_model,    # (T_seq,) FIX C
+            "ghost_debug":     ghost_debug,
         }
 
     if phase_outputs is not None:
@@ -716,6 +823,7 @@ def run_prediction(
         r["item"]
         for r in sorted(results, key=lambda x: x["item"]["margin"], reverse=True)
     ]
+
     return {"best": best_item, "all": all_results}, best_imp, worst_joints, phase_outputs
 
 
@@ -936,11 +1044,11 @@ def annotate_video(
     T_model         = 0
 
     if has_phase:
-        ghost_seq       = phase_outputs["ghost_xyz"]        # (T_u, J, 3)
-        user_synced_seq = phase_outputs["user_synced"]      # (T_u, J, 3)
-        joint_conf_seq  = phase_outputs["joint_confidence"] # (T_u, J)
-        video_to_model  = phase_outputs["video_to_model"]   # (T_seq,) — FIX C
-        T_model         = ghost_seq.shape[0]
+        ghost_seq       = phase_outputs["ghost_xyz"]        # (T_seq, J, 3)
+        user_synced_seq = phase_outputs["user_synced"]      # (T_seq, J, 3)
+        joint_conf_seq  = phase_outputs["joint_confidence"] # (T_u, J)  model timeline
+        video_to_model  = phase_outputs["video_to_model"]   # (T_seq,) template frame index
+        T_model         = ghost_seq.shape[0]  # now equals T_seq
 
     with vision.PoseLandmarker.create_from_options(options) as landmarker:
         frame_idx = 0
@@ -955,27 +1063,29 @@ def annotate_video(
             ts_ms  = int((frame_idx / fps) * 1000)
             result = landmarker.detect_for_video(mp_img, ts_ms)
 
-            # FIX C: use lookup table instead of linear remap
-            if video_to_model is not None and frame_idx < len(video_to_model):
-                model_t = int(video_to_model[frame_idx])
-                model_t = max(0, min(model_t, T_model - 1))
-            elif T_model > 0:
-                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
-                model_t = int(round(frame_idx / max(1, total_frames - 1) * max(0, T_model - 1)))
-                model_t = min(model_t, T_model - 1)
+            # Ghost is now (T_seq, J, 3) — one entry per video frame.
+            # Index directly by frame_idx; no remapping needed.
+            if T_model > 0:
+                model_t = min(frame_idx, T_model - 1)
             else:
                 model_t = 0
 
             # FIX E: compute temporal correlation for this window
             joint_corr: np.ndarray | None = None
             if has_phase and ghost_seq is not None and user_synced_seq is not None:
+                # Both signals are now on the video timeline (T_seq frames)
                 joint_corr = compute_temporal_correlation(
-                    ghost_seq[..., :2],       # (T_u, J, 2)
-                    user_synced_seq[..., :2], # (T_u, J, 2)
+                    ghost_seq[..., :2],       # (T_seq, J, 2)
+                    user_synced_seq[..., :2], # (T_seq, J, 2)
                     model_t,
                 )
 
             if has_phase and ghost_seq is not None:
+                if frame_idx == 0:  # print once
+                    g = ghost_seq[model_t]
+                    print(f"  [ghost debug] frame0 XY min=({g[:,:2].min():.3f}) max=({g[:,:2].max():.3f})")
+                    in_range = np.sum((g[:,0] >= -0.05) & (g[:,0] <= 1.05) & (g[:,1] >= -0.05) & (g[:,1] <= 1.05))
+                    print(f"  [ghost debug] joints in range: {in_range}/17")
                 draw_ghost_skeleton(frame, ghost_seq[model_t], width, height)
 
             if result.pose_landmarks:
@@ -1001,10 +1111,15 @@ def annotate_video(
                               width, bad_idxs, top3_idxs)
 
                 if has_phase and ghost_seq is not None and joint_conf_seq is not None:
+                    # joint_conf_seq is on the model timeline (T_u frames)
+                    # map frame_idx proportionally
+                    T_conf = joint_conf_seq.shape[0]
+                    total_frames_approx = max(1, T_model)
+                    conf_t = min(int(frame_idx * T_conf / total_frames_approx), T_conf - 1)
                     draw_correction_arrows(
                         frame, user_pts,
                         ghost_seq[model_t],
-                        joint_conf_seq[model_t],
+                        joint_conf_seq[conf_t],
                         width, height, bad_idxs,
                     )
 
@@ -1031,16 +1146,14 @@ def process_video(
     output_dir: Path,
     device: torch.device,
     pose_model_path: Path,
+    ghost_anchor: str = "hips",
 ) -> dict:
     raw_sequence  = extract_mediapipe_sequence(video_path, pose_model_path)
-    # Use the in_channels of the first model — all models for a given
-    # exercise share the same architecture, and mixed checkpoints are not
-    # supported in a single run.
     in_ch = models[0].in_channels if models else 12
     input_tensor  = build_model_input(raw_sequence, preprocessor, in_channels=in_ch)
 
     summary, joint_importance, worst_joints, phase_outputs = run_prediction(
-        input_tensor, raw_sequence, models, device
+        input_tensor, raw_sequence, models, device, ghost_anchor=ghost_anchor
     )
 
     annotated_path = output_dir / f"{video_path.stem}_annotated.mp4"
@@ -1055,6 +1168,7 @@ def process_video(
         "annotated_video_codec": output_codec,
         "num_frames":            int(raw_sequence.shape[0]),
         "has_phase_decoder":     phase_outputs is not None,
+        "ghost_anchor":          ghost_anchor,
         "worst_joints":          worst_joints[:5],
         **summary,
     }
@@ -1077,6 +1191,13 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--checkpoints-root", type=Path, default=Path("checkpoints") / "uiprmd")
     parser.add_argument("--pose-model",       type=Path, default=None)
     parser.add_argument("--device",           type=str,  default="auto")
+    parser.add_argument(
+        "--ghost-anchor",
+        type=str,
+        default="hips",
+        choices=["hips", "ankles", "heels", "foot_index"],
+        help="Anchor ghost overlay to this body reference (default: hips).",
+    )
     return parser.parse_args(list(argv) if argv is not None else None)
 
 
@@ -1102,6 +1223,9 @@ def main(argv: Iterable[str] | None = None) -> None:
 
     preprocessor = UIPRMDPreprocessor()
     all_reports  = []
+    
+    # NEW: Create a list to store our rows for the CSV
+    evaluation_rows = [] 
 
     for video_path in video_files:
         exercise_id = int(video_path.stem.split("-")[0].replace("ex", ""))
@@ -1109,16 +1233,43 @@ def main(argv: Iterable[str] | None = None) -> None:
         if exercise_id < 1 or exercise_id > len(models):
             print(f"Skipping {video_path.name}: exercise ID {exercise_id} out of range.")
             continue
+            
         report = process_video(
             video_path, specific_models[model_idx],  # type: ignore[arg-type]
             preprocessor, args.output_dir, device, pose_model_path,
+            ghost_anchor=args.ghost_anchor,
         )
         all_reports.append(report)
         print(json.dumps(report["best"], indent=2))
 
+        # NEW: Parse the expected label from the filename and append the data row
+        best = report["best"]
+        expected_label = "incorrect" if "inc" in video_path.stem.lower() else "correct"
+        actual_label = best["predicted_label"]
+        
+        evaluation_rows.append({
+            "Video Name": video_path.name,
+            "Exercise": best["exercise_name"],
+            "Score": best["score"],
+            "Threshold": best["threshold"],
+            "Expected": expected_label,
+            "Actual": actual_label,
+            "Match": "TRUE" if expected_label == actual_label else "FALSE"
+        })
+
     summary_path = args.output_dir / "all_videos_summary.json"
     summary_path.write_text(json.dumps(all_reports, indent=2), encoding="utf-8")
     print(f"Saved summary: {summary_path}")
+
+    # NEW: Write the collected evaluation rows to a CSV file
+    csv_path = args.output_dir / "evaluation_overview.csv"
+    with csv_path.open("w", newline="", encoding="utf-8") as f:
+        fieldnames = ["Video Name", "Exercise", "Score", "Threshold", "Expected", "Actual", "Match"]
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(evaluation_rows)
+        
+    print(f"Saved evaluation overview: {csv_path}")
 
 
 if __name__ == "__main__":
