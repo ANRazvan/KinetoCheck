@@ -156,3 +156,6 @@ frontendWeb/KinetoCheckWeb/obj/
 
 Video-kineto-annotated/
 Video-kineto-annotated/web_uploads/
+App/appsettings.json
+AI/tmp_api_uploads/
+App/wwwroot/uploads/

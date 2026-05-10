@@ -1,0 +1,94 @@
+@model App.ViewModels.UploadResultPageViewModel
+@{
+    ViewData["Title"] = "Upload Result";
+}
+
+<div class="panel-card p-4">
+    <div class="panel-header mb-0">
+        <div>
+            <p class="panel-kicker">Analysis Complete</p>
+            <h2>@Model.AssessedExercise</h2>
+        </div>
+        <div>
+            <a class="btn btn-outline-secondary btn-sm" asp-action="Index">Back to Dashboard</a>
+        </div>
+    </div>
+
+    <div class="result-layout">
+        <div class="result-data-column">
+            <div class="result-grid mb-4">
+                <div class="result-score">
+                    <span>Final Score</span>
+                    <strong>@Model.Score.ToString("F3")</strong>
+                    <small class="fw-bold @(Model.Prediction.ToLower() == "correct" ? "text-success" : "text-danger")">
+                        @Model.Prediction.ToUpper()
+                    </small>
+                    <hr class="my-2 opacity-25" />
+                    <small>Threshold: @Model.Threshold.ToString("F3")</small>
+                    <small>Margin: @Model.Margin.ToString("+0.000;-0.000;0.000")</small>
+                </div>
+                <div class="result-detail">
+                    <span>Summary</span>
+                    <p class="fw-medium">@Model.Summary</p>
+                    <span>Recorded On</span>
+                    <p>@Model.RecordedAtUtc.ToLocalTime().ToString("f")</p>
+                </div>
+            </div>
+
+            @if (Model.JointInsights?.Count > 0)
+            {
+                <div class="joint-table">
+                    <h3 class="h6 text-muted mb-3 text-uppercase letter-spacing-1">Problematic Joints</h3>
+                    <div class="table-responsive rounded-3 border">
+                        <table class="table table-hover table-sm align-middle mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th class="px-3">Rank</th>
+                                    <th>Joint</th>
+                                    <th>Deviation</th>
+                                    <th>Importance</th>
+                                    <th>Problem</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var j in Model.JointInsights)
+                                {
+                                    <tr>
+                                        <td class="px-3">#@j.RankIndex</td>
+                                        <td class="fw-medium text-capitalize">@j.JointName.Replace("_", " ")</td>
+                                        <td>@j.Deviation.ToString("F3")</td>
+                                        <td>@j.Importance.ToString("F3")</td>
+                                        <td>
+                                            <span class="badge text-bg-warning rounded-pill">@j.ProblemScore.ToString("F3")</span>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            }
+        </div>
+
+        <div class="result-video-column">
+            @if (!string.IsNullOrWhiteSpace(Model.AnnotatedVideoUrl))
+            {
+                <div class="video-shell h-100 justify-content-center">
+                    <video controls autoplay loop muted playsinline>
+                        <source src="@Model.AnnotatedVideoUrl" type="video/mp4" />
+                        Your browser does not support the video tag.
+                    </video>
+                    <a class="btn btn-primary mt-4 w-100" href="@Model.AnnotatedVideoUrl" download>
+                        Download Video
+                    </a>
+                </div>
+            }
+            else
+            {
+                <div class="video-shell h-100 justify-content-center text-center">
+                    <p class="text-muted">No annotated video available for this analysis.</p>
+                </div>
+            }
+        </div>
+    </div>
+</div>

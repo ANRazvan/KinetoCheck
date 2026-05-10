@@ -129,6 +129,36 @@ CORR_WINDOW = 15
 
 
 # ---------------------------------------------------------------------------
+# Model cache (global, persists across requests)
+# ---------------------------------------------------------------------------
+
+_MODEL_CACHE: dict[str, list[LoadedExerciseModel]] = {}
+
+
+def get_cached_models(checkpoints_root: Path, device: torch.device) -> list[LoadedExerciseModel]:
+    """
+    Load models once and cache them in memory. Subsequent calls return the cached models.
+    
+    Args:
+        checkpoints_root: Path to the checkpoints directory
+        device: torch device to load models onto
+        
+    Returns:
+        List of cached LoadedExerciseModel instances
+    """
+    cache_key = str(checkpoints_root.resolve())
+    
+    if cache_key not in _MODEL_CACHE:
+        print(f"[Cache] Loading models from {checkpoints_root}...")
+        _MODEL_CACHE[cache_key] = load_models(checkpoints_root, device)
+        print(f"[Cache] Loaded {len(_MODEL_CACHE[cache_key])} models. Cached for future requests.")
+    else:
+        print(f"[Cache] Using {len(_MODEL_CACHE[cache_key])} cached models.")
+    
+    return _MODEL_CACHE[cache_key]
+
+
+# ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
 

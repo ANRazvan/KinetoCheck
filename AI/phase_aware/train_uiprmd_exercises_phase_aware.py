@@ -1,44 +1,31 @@
 """
 Train one ST-GAT ExerciseEvaluator per UI-PRMD exercise.
 
-ROOT CAUSE FIX — "always predicts correct"
-==========================================
-The original training had three compounding problems that caused the model
-to output high similarity for every input regardless of whether it was
-correct or not:
+Changes vs. original
+--------------------
+- Optionally trains the FrameDecoder with DeltaRegressionLoss (aux loss).
+- Checkpoints now store extra metadata needed by inference:
+    preprocessor_config, feature_channels, in_channels,
+    hidden_channels, embedding_dim, use_phase_decoder
+- All new fields are added alongside the existing ones so old loaders
+  that only read model_state_dict / template_tensor / val_threshold
+  continue to work.
+- CLI gains --delta-weight (float, default 0.1) and
+  --no-phase-decoder (flag to disable the new head entirely).
 
-1. BLURRY TEMPLATE (mean of all correct samples)
-   The template was the element-wise average of every correct execution.
-   After z-scoring and averaging, this produces a "mean pose sequence" that
-   sits near the centroid of the embedding space.  Any input that is even
-   vaguely exercise-shaped ends up close to it in cosine space.
-   FIX: Use the single most-representative correct sample (the one with the
-   highest average cosine similarity to all other correct samples) as the
-   template.  A sharp, real sequence makes a much harder target.
-
-2. NO CROSS-EXERCISE NEGATIVES
-   Each model only saw "correct vs incorrect of the same exercise."
-   "Incorrect" in UI-PRMD means wrong form of the SAME exercise — not a
-   completely different movement.  The model had zero training signal to
-   distinguish "this is the wrong exercise entirely."
-   FIX: For each exercise, sample a fraction of sequences from ALL OTHER
-   exercises and add them as hard negatives (label = 0).  This forces the
-   model to learn exercise identity, not just form quality.
-
-3. CLASS IMBALANCE COLLAPSE
-   UI-PRMD has many more "incorrect form" samples than "correct form."
-   With contrastive loss, if negatives dominate, the easiest optimum is to
-   push everything apart — then the threshold search finds a threshold near
-   the top of the score distribution, making nearly everything "correct."
-   FIX: Oversample positives (correct) to balance the dataset, and use a
-   larger contrastive margin so negative pairs must be clearly separated.
-
-Additional changes
-------------------
-- Added score distribution logging per epoch so you can see if collapse
-  is happening (all scores the same → collapse).
-- Template is now stored as the raw representative sequence, not the mean.
-- Hard-negative ratio and positive oversampling are CLI-configurable.
+FIX (overlay bug):
+- build_raw_xyz_template no longer calls align_vicon_to_mediapipe() or
+  preprocessor.process().
+  * align_vicon_to_mediapipe() subtracts the hip midpoint — output is in
+    body-centred metric space, NOT image-fraction [0,1].
+  * preprocessor.process() z-scores on top of that — even further off.
+  * The ghost overlay needs image-fraction XY so joints map to pixels.
+  * For MediaPipe datasets: record["sequence"] already contains raw
+    image-fraction XY; we use that directly.
+  * For Vicon datasets: image fractions are unavailable; we fall back to
+    body-centred coords (overlay will be approximate).
+- Variable-length sequences are resampled to the median length via linear
+  interpolation before averaging (fixes RuntimeError: stack expects equal size).
 """
 
 from __future__ import annotations
@@ -54,11 +41,10 @@ from typing import Iterable
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
-from phase_aware import ContrastiveLoss, DeltaRegressionLoss, ExerciseEvaluator
-from Preprocessing.UIPRMDPreprocessor import UIPRMDPreprocessor
+from phase_aware import ContrastiveLoss, DeltaRegressionLoss, ExerciseEvaluator, RangeOfMotionLoss
+from Preprocessing.UIPRMDPreprocessor import UIPRMDPreprocessor, build_features_from_aligned
 from Preprocessing.UIPRMD_loader import UIPRMDLoader
 
 
@@ -71,28 +57,23 @@ class TrainingConfig:
     data_root: Path
     output_dir: Path
     exercise_ids: tuple[int, ...]
-    epochs: int = 50
-    batch_size: int = 16
-    learning_rate: float = 3e-4
+    epochs: int = 30
+    batch_size: int = 8
+    learning_rate: float = 1e-3
     weight_decay: float = 1e-4
     hidden_channels: tuple[int, ...] = (64, 128)
     embedding_dim: int = 128
-    # Larger margin forces negatives to be clearly separated
-    margin: float = 0.5
-    delta_weight: float = 0.05
+    margin: float = 1.0
+    delta_weight: float = 0.0
+    rom_weight: float = 2
     train_ratio: float = 0.8
     val_ratio: float = 0.1
     test_ratio: float = 0.1
     seed: int = 42
-    patience: int = 15
+    patience: int = 10
     num_workers: int = 0
     device: str = "auto"
     use_phase_decoder: bool = True
-    # Fraction of training samples to replace with cross-exercise hard negatives
-    # e.g. 0.3 means ~30% of each batch will be wrong-exercise pairs (label=0)
-    hard_negative_ratio: float = 0.3
-    # How many times to repeat each positive (correct) sample to balance classes
-    positive_oversample: int = 3
 
 
 # ---------------------------------------------------------------------------
@@ -105,79 +86,33 @@ class ExercisePairDataset(Dataset):
         records: list[dict],
         template_tensor: torch.Tensor,
         preprocessor: UIPRMDPreprocessor,
-        hard_negative_records: list[dict] | None = None,
-        hard_negative_ratio: float = 0.3,
-        positive_oversample: int = 3,
-        is_train: bool = True,
     ):
         self.template = template_tensor.detach().clone().float()
         self.samples: list[dict] = []
 
-        # Cache processed tensors to avoid re-processing per epoch
-        tensor_cache: dict[str, torch.Tensor] = {}
-
-        def get_tensor(record: dict) -> torch.Tensor:
-            key = str(record["file"])
-            if key not in tensor_cache:
-                tensor_cache[key] = self._record_to_tensor(record, preprocessor)
-            return tensor_cache[key]
-
-        # --- Same-exercise samples (correct label=0 → target=1.0, incorrect label!=0 → target=0.0) ---
-        same_ex_samples = []
         for record in records:
-            user_tensor = get_tensor(record)
+            user_tensor = self._record_to_tensor(record, preprocessor)
             target = 1.0 if int(record["label"]) == 0 else 0.0
-            same_ex_samples.append({
-                "template": self.template,
-                "user": user_tensor,
-                "target": torch.tensor(target, dtype=torch.float32),
-                "label": int(record["label"]),
-                "exercise_id": int(record["exercise_id"]),
-                "subject_id": int(record["subject_id"]),
-                "file": str(record["file"]),
-            })
 
-        if is_train and positive_oversample > 1:
-            # Oversample correct samples to balance against (more numerous) incorrect ones
-            positives = [s for s in same_ex_samples if s["target"].item() == 1.0]
-            negatives = [s for s in same_ex_samples if s["target"].item() == 0.0]
-            balanced = negatives + positives * positive_oversample
-            random.shuffle(balanced)
-            self.samples.extend(balanced)
-        else:
-            self.samples.extend(same_ex_samples)
-
-        # --- Cross-exercise hard negatives (only for training) ---
-        if is_train and hard_negative_records and hard_negative_ratio > 0:
-            n_hard = int(len(self.samples) * hard_negative_ratio)
-            hard_pool = hard_negative_records.copy()
-            random.shuffle(hard_pool)
-            for record in hard_pool[:n_hard]:
-                user_tensor = get_tensor(record)
-                self.samples.append({
+            self.samples.append(
+                {
                     "template": self.template,
                     "user": user_tensor,
-                    "target": torch.tensor(0.0, dtype=torch.float32),  # always negative
-                    "label": -1,   # sentinel: cross-exercise hard negative
+                    "target": torch.tensor(target, dtype=torch.float32),
+                    "label": int(record["label"]),
                     "exercise_id": int(record["exercise_id"]),
-                    "subject_id": int(record.get("subject_id", -1)),
+                    "subject_id": int(record["subject_id"]),
                     "file": str(record["file"]),
-                })
-
-        random.shuffle(self.samples)
+                }
+            )
 
     @staticmethod
     def _record_to_tensor(
         record: dict, preprocessor: UIPRMDPreprocessor
     ) -> torch.Tensor:
-        aligned = preprocessor.align_vicon_to_mediapipe(record["sequence"])
-        processed = preprocessor.process(aligned)
-
-        velocity     = np.diff(processed, axis=0, prepend=processed[:1])
-        acceleration = np.diff(velocity,  axis=0, prepend=velocity[:1])
-
-        features = np.concatenate([processed, velocity, acceleration], axis=-1)  # (T, 17, 9)
-        features = np.transpose(features, (2, 0, 1)).copy()                      # (9, T, 17)
+        aligned   = preprocessor.align_vicon_to_mediapipe(record["sequence"])
+        processed = preprocessor.process(aligned)            # (T, 17, 3)
+        features  = build_features_from_aligned(processed)  # (12, T, 17)
         return torch.from_numpy(features).float()
 
     def __len__(self) -> int:
@@ -267,76 +202,55 @@ def split_by_subject(
     return train_records, val_records, test_records
 
 
-def _record_to_embedding(
-    record: dict,
-    preprocessor: UIPRMDPreprocessor,
-    model: ExerciseEvaluator,
-    device: torch.device,
-) -> torch.Tensor:
-    """Process a single record to a normalised embedding (no grad)."""
-    aligned   = preprocessor.align_vicon_to_mediapipe(record["sequence"])
-    processed = preprocessor.process(aligned)
-    velocity     = np.diff(processed, axis=0, prepend=processed[:1])
-    acceleration = np.diff(velocity,  axis=0, prepend=velocity[:1])
-    features = np.concatenate([processed, velocity, acceleration], axis=-1)
-    features = np.transpose(features, (2, 0, 1)).copy()
-    tensor = torch.from_numpy(features).float().unsqueeze(0).to(device)
-    with torch.no_grad():
-        emb, _ = model.encode(tensor, return_attentions=False)
-    return emb.squeeze(0).cpu()
+# def build_template_tensor(
+#     records: list[dict], preprocessor: UIPRMDPreprocessor
+# ) -> torch.Tensor:
+#     correct_records = [r for r in records if int(r["label"]) == 0]
+#     if not correct_records:
+#         raise ValueError("No correct samples to build a template.")
 
+#     tensors = []
+#     for r in correct_records:
+#         aligned   = preprocessor.align_vicon_to_mediapipe(r["sequence"])
+#         processed = preprocessor.process(aligned)
+#         features  = build_features_from_aligned(processed)  # (12, T, 17)
+#         tensors.append(torch.from_numpy(features).float())
+
+#     return torch.stack(tensors, dim=0).mean(dim=0)
 
 def build_template_tensor(
-    records: list[dict],
-    preprocessor: UIPRMDPreprocessor,
+    records: list[dict], preprocessor: UIPRMDPreprocessor
 ) -> torch.Tensor:
-    """
-    Choose the single most-representative correct sample as the template.
-
-    We pick the correct sample whose processed feature tensor has the highest
-    average cosine similarity to all other correct samples.  A real, sharp
-    sequence makes a much better discriminative target than the blurry mean.
-
-    Falls back to simple mean if there is only one correct sample.
-    """
     correct_records = [r for r in records if int(r["label"]) == 0]
     if not correct_records:
         raise ValueError("No correct samples to build a template.")
 
-    tensors = []
-    for r in correct_records:
-        aligned  = preprocessor.align_vicon_to_mediapipe(r["sequence"])
-        processed = preprocessor.process(aligned)
-        velocity     = np.diff(processed, axis=0, prepend=processed[:1])
-        acceleration = np.diff(velocity,  axis=0, prepend=velocity[:1])
-        features = np.concatenate([processed, velocity, acceleration], axis=-1)
-        tensors.append(
-            torch.from_numpy(np.transpose(features, (2, 0, 1)).copy()).float()
-        )
+    # 1. Find the record with the median raw frame length
+    # This guarantees we pick a squat performed at a "normal" human speed.
+    lengths = [len(r["sequence"]) for r in correct_records]
+    median_idx = int(np.argsort(lengths)[len(lengths) // 2])
+    best_record = correct_records[median_idx]
 
-    if len(tensors) == 1:
-        return tensors[0]
+    # 2. Process ONLY this single, high-quality record
+    aligned   = preprocessor.align_vicon_to_mediapipe(best_record["sequence"])
+    processed = preprocessor.process(aligned)
+    features  = build_features_from_aligned(processed)  # (12, T, 17)
 
-    # Pool each tensor to a vector and find the medoid
-    vecs = torch.stack([t.mean(dim=(1, 2)) for t in tensors], dim=0)   # (N, C)
-    vecs = F.normalize(vecs, p=2, dim=-1)
-    sim_matrix = vecs @ vecs.T    # (N, N)
-    # Best = highest mean similarity to all others (medoid)
-    mean_sim = sim_matrix.mean(dim=1)
-    best_idx = int(mean_sim.argmax().item())
-    print(f"  Template: medoid sample {best_idx+1}/{len(tensors)} "
-          f"(mean cosine sim to others: {mean_sim[best_idx]:.3f})")
-    return tensors[best_idx]
+    return torch.from_numpy(features).float()
 
 
 def _resample_to(arr: np.ndarray, target_T: int) -> np.ndarray:
+    """
+    Linearly resample a (T, ...) array to (target_T, ...) along axis 0.
+    All inner dimensions are preserved; only the time axis is resampled.
+    """
     T_i = arr.shape[0]
     if T_i == target_T:
         return arr
     if T_i == 1:
         return np.repeat(arr, target_T, axis=0)
     original_trailing = arr.shape[1:]
-    flat = arr.reshape(T_i, -1)
+    flat = arr.reshape(T_i, -1)                                # (T_i, F)
     src_t = np.linspace(0.0, 1.0, T_i,      dtype=np.float32)
     dst_t = np.linspace(0.0, 1.0, target_T, dtype=np.float32)
     out = np.zeros((target_T, flat.shape[1]), dtype=np.float32)
@@ -345,49 +259,104 @@ def _resample_to(arr: np.ndarray, target_T: int) -> np.ndarray:
     return out.reshape(target_T, *original_trailing)
 
 
-def build_raw_xyz_template(records: list[dict], preprocessor: UIPRMDPreprocessor) -> torch.Tensor:
-    """
-    Build a template in RAW un-preprocessed XY coordinates for the overlay.
+# def build_raw_xyz_template(records: list[dict], preprocessor: UIPRMDPreprocessor) -> torch.Tensor:
+#     """
+#     Build a template in RAW un-preprocessed XY coordinates for the overlay.
 
-    For MediaPipe datasets, record["sequence"] already contains raw
-    image-fraction XY in shape (T, 17, 3) or flat (T, 51).
-    For Vicon datasets, align first and then normalise each axis to [0, 1]
-    so the overlay stays in a screen-like coordinate range.
-    Variable-length sequences are resampled to the median length.
+#     WHY NOT align_vicon_to_mediapipe() / preprocessor.process():
+#     -------------------------------------------------------------
+#     align_vicon_to_mediapipe() subtracts the hip midpoint, putting output
+#     in body-centred metric space — NOT [0,1] image fractions.
+#     preprocessor.process() z-scores on top of that — even further off.
+#     The ghost overlay needs image-fraction XY (matching MediaPipe output at
+#     runtime) so joints map to the correct pixel positions.
 
-    Returns torch.Tensor shape (3, T, J).
-    """
+#     Coordinate source:
+#     ------------------
+#     For MediaPipe datasets, record["sequence"] already contains raw
+#     image-fraction XY in shape (T, 17, 3) or flat (T, 51).  We use that.
+#     For Vicon datasets (39-joint), image fractions are unavailable; we fall
+#     back to body-centred coords — the overlay will be approximate.
+
+#     Variable-length fix:
+#     --------------------
+#     Sequences have different frame counts.  We resample every sequence to
+#     the median length via linear interpolation before averaging, which fixes
+#     the "stack expects each tensor to be equal size" RuntimeError.
+
+#     Returns
+#     -------
+#     torch.Tensor  shape (3, T, J)
+#         Ch 0,1 = image-fraction X, Y  (~[0,1]).
+#         Ch 2   = Z / depth (not used for 2-D overlay).
+#     """
+#     correct_records = [r for r in records if int(r["label"]) == 0]
+#     if not correct_records:
+#         raise ValueError("No correct samples to build raw XYZ template.")
+
+#     raw_list: list[np.ndarray] = []
+#     using_raw_image_fractions = True
+
+#     for r in correct_records:
+#         seq = np.asarray(r["sequence"], dtype=np.float32)
+
+#         if seq.ndim == 3 and seq.shape[1] == 17:
+#             # (T, 17, 3) — raw MediaPipe image-fraction XYZ
+#             raw_list.append(seq)
+#         elif seq.ndim == 2 and seq.shape[1] == 51:
+#             # (T, 51) flat MediaPipe → reshape to (T, 17, 3)
+#             raw_list.append(seq.reshape(seq.shape[0], 17, 3))
+#         else:
+#             # Vicon data (39-joint or flat): image fractions unavailable.
+#             # Use body-centred aligned coords as a best approximation.
+#             using_raw_image_fractions = False
+#             aligned = preprocessor.align_vicon_to_mediapipe(seq)  # (T, 17, 3)
+#             raw_list.append(aligned)
+
+#     if not using_raw_image_fractions:
+#         print(
+#             "  [warn] build_raw_xyz_template: dataset appears to be Vicon data "
+#             "(not MediaPipe image fractions).  Ghost overlay will use "
+#             "body-centred coordinates — joint positions will be approximate."
+#         )
+
+#     # Resample all sequences to the median frame count, then average.
+#     lengths = [a.shape[0] for a in raw_list]
+#     target_T = int(np.median(lengths))
+
+#     tensors: list[torch.Tensor] = []
+#     for seq_arr in raw_list:
+#         resampled = _resample_to(seq_arr, target_T)          # (target_T, 17, 3)
+#         xyz = np.transpose(resampled, (2, 0, 1)).copy()      # (3, target_T, 17)
+#         tensors.append(torch.from_numpy(xyz).float())
+
+#     return torch.stack(tensors, dim=0).mean(dim=0)           # (3, target_T, 17)
+
+def build_raw_xyz_template(
+    records: list[dict], preprocessor: UIPRMDPreprocessor
+) -> torch.Tensor:
     correct_records = [r for r in records if int(r["label"]) == 0]
     if not correct_records:
         raise ValueError("No correct samples to build raw XYZ template.")
 
-    raw_list: list[np.ndarray] = []
-    using_raw_image_fractions = True
+    # 1. Select the exact same median record
+    lengths = [len(r["sequence"]) for r in correct_records]
+    median_idx = int(np.argsort(lengths)[len(lengths) // 2])
+    best_record = correct_records[median_idx]
 
-    for r in correct_records:
-        seq = np.asarray(r["sequence"], dtype=np.float32)
-        if seq.ndim == 3 and seq.shape[1] == 17:
-            raw_list.append(seq)
-        elif seq.ndim == 2 and seq.shape[1] == 51:
-            raw_list.append(seq.reshape(seq.shape[0], 17, 3))
-        else:
-            aligned = preprocessor.align_vicon_to_mediapipe(seq)
-            axis_min = aligned.min(axis=(0, 1), keepdims=True)
-            axis_max = aligned.max(axis=(0, 1), keepdims=True)
-            aligned = (aligned - axis_min) / np.maximum(axis_max - axis_min, 1e-6)
-            raw_list.append(np.clip(aligned, 0.0, 1.0))
+    seq = np.asarray(best_record["sequence"], dtype=np.float32)
 
-    lengths  = [a.shape[0] for a in raw_list]
-    target_T = int(np.median(lengths))
+    # 2. Format it directly without temporal resampling/averaging
+    if seq.ndim == 3 and seq.shape[1] == 17:
+        raw_seq = seq
+    elif seq.ndim == 2 and seq.shape[1] == 51:
+        raw_seq = seq.reshape(seq.shape[0], 17, 3)
+    else:
+        raw_seq = preprocessor.align_vicon_to_mediapipe(seq)
 
-    tensors: list[torch.Tensor] = []
-    for seq_arr in raw_list:
-        resampled = _resample_to(seq_arr, target_T)
-        xyz = np.transpose(resampled, (2, 0, 1)).copy()
-        tensors.append(torch.from_numpy(xyz).float())
-
-    return torch.stack(tensors, dim=0).mean(dim=0)
-
+    # Transpose to (3, T, J)
+    xyz = np.transpose(raw_seq, (2, 0, 1)).copy()
+    return torch.from_numpy(xyz).float()
 
 def collate_batch(batch: list[dict]) -> dict:
     templates = torch.stack([item["template"] for item in batch], dim=0)
@@ -421,7 +390,7 @@ def search_best_threshold(
         return lo, classification_metrics(scores, targets, lo)
 
     best_thr, best_met = lo, {"accuracy": 0.0, "precision": 0.0, "recall": 0.0, "f1": 0.0}
-    for thr in torch.linspace(lo, hi, steps=201):
+    for thr in torch.linspace(lo, hi, steps=101):
         met = classification_metrics(scores, targets, float(thr.item()))
         if met["f1"] > best_met["f1"]:
             best_met, best_thr = met, float(thr.item())
@@ -454,7 +423,8 @@ def evaluate(
     criterion: ContrastiveLoss,
     delta_criterion: DeltaRegressionLoss | None,
     device: torch.device,
-    delta_weight: float = 0.05,
+    delta_weight: float = 0.1,
+    rom_criterion=None,
 ) -> dict[str, float | torch.Tensor]:
     model.eval()
     losses, scores, targets = [], [], []
@@ -479,6 +449,9 @@ def evaluate(
                 )
                 loss = loss + delta_weight * d_loss
 
+            if rom_criterion is not None:
+                loss = loss + rom_criterion(user, template, target)
+
             losses.append(float(loss.item()))
             scores.append(outputs["similarity_score"].detach().cpu())
             targets.append(target.detach().cpu())
@@ -488,12 +461,10 @@ def evaluate(
     threshold, metrics = search_best_threshold(scores_t, targets_t)
 
     return {
-        "loss":       float(np.mean(losses)) if losses else 0.0,
-        "threshold":  threshold,
-        "score_mean": float(scores_t.mean().item()) if scores_t.numel() > 0 else 0.0,
-        "score_std":  float(scores_t.std().item())  if scores_t.numel() > 0 else 0.0,
-        "scores":     scores_t,
-        "targets":    targets_t,
+        "loss":      float(np.mean(losses)) if losses else 0.0,
+        "threshold": threshold,
+        "scores":    scores_t,
+        "targets":   targets_t,
         **metrics,
     }
 
@@ -502,25 +473,7 @@ def evaluate(
 # Per-exercise training
 # ---------------------------------------------------------------------------
 
-def load_all_records(
-    loader_ds: UIPRMDLoader, all_exercise_ids: tuple[int, ...]
-) -> dict[int, list[dict]]:
-    """Load records for every exercise — used to sample cross-exercise negatives."""
-    all_records: dict[int, list[dict]] = {}
-    for eid in all_exercise_ids:
-        try:
-            recs = loader_ds.load_vicon_data(exercise_id=eid)
-            all_records[eid] = recs
-        except Exception:
-            all_records[eid] = []
-    return all_records
-
-
-def train_one_exercise(
-    exercise_id: int,
-    cfg: TrainingConfig,
-    all_records_by_exercise: dict[int, list[dict]] | None = None,
-) -> dict[str, float]:
+def train_one_exercise(exercise_id: int, cfg: TrainingConfig) -> dict[str, float]:
     set_seed(cfg.seed + exercise_id)
 
     loader_ds    = UIPRMDLoader(cfg.data_root)
@@ -535,43 +488,20 @@ def train_one_exercise(
     if not train_records:
         raise ValueError(f"Training split is empty for exercise {exercise_id}.")
 
-    # --- Build template (medoid of correct samples, not blurry mean) ---
     template_tensor     = build_template_tensor(train_records, preprocessor)
+
+    # RAW XYZ template for the inference ghost overlay.
+    # Must NOT be preprocessed — see build_raw_xyz_template docstring.
     template_xyz_tensor = build_raw_xyz_template(train_records, preprocessor)
 
-    # --- Cross-exercise hard negatives ---
-    hard_negative_records: list[dict] = []
-    if all_records_by_exercise is not None and cfg.hard_negative_ratio > 0:
-        for other_id, other_records in all_records_by_exercise.items():
-            if other_id == exercise_id:
-                continue
-            # Take only correct-form samples from other exercises as hard negatives
-            # (correct form of the wrong exercise is a harder negative than wrong form)
-            correct_others = [r for r in other_records if int(r["label"]) == 0]
-            hard_negative_records.extend(correct_others)
-        random.Random(cfg.seed).shuffle(hard_negative_records)
-        print(f"  Exercise {exercise_id}: {len(hard_negative_records)} cross-exercise hard negatives available.")
-
-    train_dataset = ExercisePairDataset(
-        train_records, template_tensor, preprocessor,
-        hard_negative_records=hard_negative_records,
-        hard_negative_ratio=cfg.hard_negative_ratio,
-        positive_oversample=cfg.positive_oversample,
-        is_train=True,
+    train_dataset = ExercisePairDataset(train_records, template_tensor, preprocessor)
+    val_dataset   = ExercisePairDataset(
+        val_records  if val_records  else train_records, template_tensor, preprocessor
     )
-    val_dataset = ExercisePairDataset(
-        val_records if val_records else train_records,
-        template_tensor, preprocessor, is_train=False,
-    )
-    test_dataset = ExercisePairDataset(
+    test_dataset  = ExercisePairDataset(
         test_records if test_records else val_records if val_records else train_records,
-        template_tensor, preprocessor, is_train=False,
+        template_tensor, preprocessor,
     )
-
-    print(f"  Exercise {exercise_id}: train={len(train_dataset)} val={len(val_dataset)} test={len(test_dataset)}")
-    pos = sum(1 for s in train_dataset.samples if s["target"].item() == 1.0)
-    neg = sum(1 for s in train_dataset.samples if s["target"].item() == 0.0)
-    print(f"  Train class balance: {pos} positive, {neg} negative ({pos/(pos+neg)*100:.1f}% pos)")
 
     train_loader = DataLoader(
         train_dataset, batch_size=cfg.batch_size, shuffle=True,
@@ -588,7 +518,7 @@ def train_one_exercise(
 
     device = resolve_device(cfg.device)
     model = ExerciseEvaluator(
-        in_channels=9,
+        in_channels=12,
         hidden_channels=cfg.hidden_channels,
         embedding_dim=cfg.embedding_dim,
         use_phase_decoder=cfg.use_phase_decoder,
@@ -596,12 +526,9 @@ def train_one_exercise(
 
     criterion       = ContrastiveLoss(margin=cfg.margin)
     delta_criterion = DeltaRegressionLoss() if cfg.use_phase_decoder else None
-    optimizer       = torch.optim.AdamW(
+    rom_criterion   = RangeOfMotionLoss(weight=cfg.rom_weight)
+    optimizer       = torch.optim.Adam(
         model.parameters(), lr=cfg.learning_rate, weight_decay=cfg.weight_decay
-    )
-    # Cosine annealing so LR doesn't stay stuck high
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=cfg.epochs, eta_min=cfg.learning_rate / 20
     )
 
     exercise_dir         = cfg.output_dir / f"exercise_{exercise_id + 1:02d}"
@@ -620,7 +547,6 @@ def train_one_exercise(
     for epoch in range(1, cfg.epochs + 1):
         model.train()
         train_losses: list[float] = []
-        all_train_scores: list[float] = []
 
         for batch in train_loader:
             template = batch["template"].to(device)
@@ -642,55 +568,37 @@ def train_one_exercise(
                 )
                 loss = loss + cfg.delta_weight * d_loss
 
+            loss = loss + rom_criterion(user, template, target)
+
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
             optimizer.step()
             train_losses.append(float(loss.item()))
-            all_train_scores.extend(
-                outputs["similarity_score"].detach().cpu().tolist()
-            )
-
-        scheduler.step()
 
         train_loss   = float(np.mean(train_losses)) if train_losses else 0.0
-        score_mean   = float(np.mean(all_train_scores))
-        score_std    = float(np.std(all_train_scores))
-        val_metrics  = evaluate(model, val_loader,  criterion, delta_criterion, device, cfg.delta_weight)
-        test_metrics = evaluate(model, test_loader, criterion, delta_criterion, device, cfg.delta_weight)
+        val_metrics  = evaluate(model, val_loader,  criterion, delta_criterion, device, cfg.delta_weight, rom_criterion)
+        test_metrics = evaluate(model, test_loader, criterion, delta_criterion, device, cfg.delta_weight, rom_criterion)
 
         epoch_metrics = {
-            "exercise_id":    exercise_id,
-            "epoch":          epoch,
-            "train_loss":     train_loss,
-            # Score distribution diagnostics — std near 0 means collapse
-            "train_score_mean": score_mean,
-            "train_score_std":  score_std,
-            "val_loss":       float(val_metrics["loss"]),
-            "val_score_mean": float(val_metrics["score_mean"]),
-            "val_score_std":  float(val_metrics["score_std"]),
-            "val_threshold":  float(val_metrics["threshold"]),
-            "val_accuracy":   float(val_metrics["accuracy"]),
-            "val_precision":  float(val_metrics["precision"]),
-            "val_recall":     float(val_metrics["recall"]),
-            "val_f1":         float(val_metrics["f1"]),
-            "test_loss":      float(test_metrics["loss"]),
-            "test_accuracy":  float(test_metrics["accuracy"]),
-            "test_precision": float(test_metrics["precision"]),
-            "test_recall":    float(test_metrics["recall"]),
-            "test_f1":        float(test_metrics["f1"]),
+            "exercise_id":   exercise_id,
+            "epoch":         epoch,
+            "train_loss":    train_loss,
+            "val_loss":      float(val_metrics["loss"]),
+            "val_threshold": float(val_metrics["threshold"]),
+            "val_accuracy":  float(val_metrics["accuracy"]),
+            "val_precision": float(val_metrics["precision"]),
+            "val_recall":    float(val_metrics["recall"]),
+            "val_f1":        float(val_metrics["f1"]),
+            "test_loss":     float(test_metrics["loss"]),
+            "test_accuracy": float(test_metrics["accuracy"]),
+            "test_precision":float(test_metrics["precision"]),
+            "test_recall":   float(test_metrics["recall"]),
+            "test_f1":       float(test_metrics["f1"]),
         }
         history.append(epoch_metrics)
 
-        if epoch % 5 == 0 or epoch == 1:
-            print(
-                f"  Ex{exercise_id} ep{epoch:3d}: loss={train_loss:.4f} "
-                f"score_mean={score_mean:.3f} score_std={score_std:.3f} "
-                f"val_f1={val_metrics['f1']:.3f} thr={val_metrics['threshold']:.3f}"
-            )
-            if score_std < 0.02:
-                print(f"  [WARN] Ex{exercise_id}: score std={score_std:.4f} — possible collapse!")
-
         checkpoint = {
+            # ---- existing fields (unchanged) ----
             "exercise_id":          exercise_id,
             "epoch":                epoch,
             "model_state_dict":     model.state_dict(),
@@ -699,15 +607,18 @@ def train_one_exercise(
             "config":               asdict(cfg),
             "metrics":              epoch_metrics,
             "val_threshold":        float(val_metrics["threshold"]),
-            "template_xyz_tensor":  template_xyz_tensor,
-            "in_channels":          9,
+            # ---- overlay / inference fields ----
+            "template_xyz_tensor":  template_xyz_tensor,  # (3, T, J) raw XY for overlay
+            "in_channels":          12,
             "hidden_channels":      list(cfg.hidden_channels),
             "embedding_dim":        cfg.embedding_dim,
             "use_phase_decoder":    cfg.use_phase_decoder,
-            "feature_channels":     ["x", "y", "z", "vx", "vy", "vz", "ax", "ay", "az"],
+            "feature_channels":     ["x","y","z","vx","vy","vz","ax","ay","az","angle","angular_vel","bone_ratio"],
             "preprocessor_config":  {
                 "align_method":        "vicon_to_mediapipe",
                 "num_joints":          17,
+                # True  → template_xyz_tensor is raw image-fraction XY (good overlay)
+                # False → body-centred metric coords (approximate overlay)
                 "template_xyz_is_raw": True,
             },
         }
@@ -738,7 +649,6 @@ def train_one_exercise(
             patience_ctr += 1
 
         if cfg.patience > 0 and patience_ctr >= cfg.patience:
-            print(f"  Ex{exercise_id}: early stop at epoch {epoch} (best val_f1={best_val_f1:.3f})")
             break
 
     summary = {
@@ -770,30 +680,26 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Train one UI-PRMD ST-GAT model per exercise."
     )
-    parser.add_argument("--data-root",            type=Path,  default=Path("Datasets") / "UIPRMD")
-    parser.add_argument("--output-dir",           type=Path,  default=Path("checkpoints") / "uiprmd")
-    parser.add_argument("--exercise-ids",         type=int,   nargs="*", default=None)
-    parser.add_argument("--epochs",               type=int,   default=50)
-    parser.add_argument("--batch-size",           type=int,   default=16)
-    parser.add_argument("--learning-rate",        type=float, default=3e-4)
-    parser.add_argument("--weight-decay",         type=float, default=1e-4)
-    parser.add_argument("--embedding-dim",        type=int,   default=128)
-    parser.add_argument("--hidden-channels",      type=int,   nargs="*", default=[64, 128])
-    parser.add_argument("--margin",               type=float, default=0.5,
-                        help="Contrastive loss margin (default 0.5 — smaller = harder separation).")
-    parser.add_argument("--delta-weight",         type=float, default=0.05)
-    parser.add_argument("--train-ratio",          type=float, default=0.8)
-    parser.add_argument("--val-ratio",            type=float, default=0.1)
-    parser.add_argument("--test-ratio",           type=float, default=0.1)
-    parser.add_argument("--seed",                 type=int,   default=42)
-    parser.add_argument("--patience",             type=int,   default=15)
-    parser.add_argument("--num-workers",          type=int,   default=0)
-    parser.add_argument("--device",               type=str,   default="auto")
-    parser.add_argument("--hard-negative-ratio",  type=float, default=0.3,
-                        help="Fraction of training samples replaced with cross-exercise hard negatives.")
-    parser.add_argument("--positive-oversample",  type=int,   default=3,
-                        help="How many times to repeat each positive sample to balance classes.")
-    parser.add_argument("--no-phase-decoder",     action="store_true",
+    parser.add_argument("--data-root",        type=Path,  default=Path("Datasets") / "UIPRMD")
+    parser.add_argument("--output-dir",       type=Path,  default=Path("checkpoints") / "uiprmd")
+    parser.add_argument("--exercise-ids",     type=int,   nargs="*", default=None)
+    parser.add_argument("--epochs",           type=int,   default=30)
+    parser.add_argument("--batch-size",       type=int,   default=8)
+    parser.add_argument("--learning-rate",    type=float, default=1e-3)
+    parser.add_argument("--weight-decay",     type=float, default=1e-4)
+    parser.add_argument("--embedding-dim",    type=int,   default=128)
+    parser.add_argument("--hidden-channels",  type=int,   nargs="*", default=[64, 128])
+    parser.add_argument("--margin",           type=float, default=1.0)
+    parser.add_argument("--delta-weight",     type=float, default=0)
+    parser.add_argument("--rom-weight",       type=float, default=2.0)
+    parser.add_argument("--train-ratio",      type=float, default=0.8)
+    parser.add_argument("--val-ratio",        type=float, default=0.1)
+    parser.add_argument("--test-ratio",       type=float, default=0.1)
+    parser.add_argument("--seed",             type=int,   default=42)
+    parser.add_argument("--patience",         type=int,   default=10)
+    parser.add_argument("--num-workers",      type=int,   default=0)
+    parser.add_argument("--device",           type=str,   default="auto")
+    parser.add_argument("--no-phase-decoder", action="store_true",
                         help="Disable FrameDecoder/PhaseAligner (pure similarity mode).")
     return parser
 
@@ -814,6 +720,7 @@ def main(argv: Iterable[str] | None = None) -> None:
         embedding_dim=args.embedding_dim,
         margin=args.margin,
         delta_weight=args.delta_weight,
+        rom_weight=args.rom_weight,
         train_ratio=args.train_ratio,
         val_ratio=args.val_ratio,
         test_ratio=args.test_ratio,
@@ -821,21 +728,14 @@ def main(argv: Iterable[str] | None = None) -> None:
         patience=args.patience,
         num_workers=args.num_workers,
         device=args.device,
-        hard_negative_ratio=args.hard_negative_ratio,
-        positive_oversample=args.positive_oversample,
         use_phase_decoder=not args.no_phase_decoder,
     )
 
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
 
-    loader_ds = UIPRMDLoader(cfg.data_root)
-    print("Pre-loading all exercise records for cross-exercise hard negatives...")
-    all_records_by_exercise = load_all_records(loader_ds, cfg.exercise_ids)
-
     summaries = []
     for exercise_id in cfg.exercise_ids:
-        print(f"\n=== Exercise {exercise_id} ===")
-        summary = train_one_exercise(exercise_id, cfg, all_records_by_exercise)
+        summary = train_one_exercise(exercise_id, cfg)
         summaries.append(summary)
         print(json.dumps(summary, indent=2))
 

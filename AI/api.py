@@ -49,10 +49,15 @@ async def analyze_video(video: UploadFile = File(...), exercise_id: str = Form("
     with tmp_path.open("wb") as f:
         shutil.copyfileobj(video.file, f)
 
+    # Create a persistent output directory for annotated videos
+    PERSISTENT_UPLOADS = BASE_DIR / "tmp_api_uploads" / "annotated_videos"
+    PERSISTENT_UPLOADS.mkdir(parents=True, exist_ok=True)
+
     # Import local processing function
     try:
         from phase_aware.video_checkpoint_inference_phase_aware import (
             process_video,
+            get_cached_models,
         )
         from Preprocessing.UIPRMDPreprocessor import UIPRMDPreprocessor
     except Exception as exc:
@@ -60,10 +65,10 @@ async def analyze_video(video: UploadFile = File(...), exercise_id: str = Form("
 
     # Minimal runtime setup mirroring app.get runtime
     try:
-        from phase_aware.video_checkpoint_inference_phase_aware import ensure_pose_task_model, load_models, resolve_device
+        from phase_aware.video_checkpoint_inference_phase_aware import ensure_pose_task_model, resolve_device
         device = resolve_device("auto")
         checkpoints_root = BASE_DIR / "checkpoints" / "uiprmd_phase_aware_rom"
-        all_models = load_models(checkpoints_root, device)
+        all_models = get_cached_models(checkpoints_root, device)
         preprocessor = UIPRMDPreprocessor()
         pose_model_path = ensure_pose_task_model(None)
     except Exception as exc:
@@ -90,12 +95,18 @@ async def analyze_video(video: UploadFile = File(...), exercise_id: str = Form("
             video_path=tmp_path,
             models=models_to_run,
             preprocessor=preprocessor,
-            output_dir=tmp_dir,
+            output_dir=PERSISTENT_UPLOADS,
             device=device,
             pose_model_path=pose_model_path,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Processing failed: {exc}")
+
+    # removing the temporary directory (but NOT the persistent uploads)
+    try:
+        shutil.rmtree(tmp_dir)
+    except Exception as exc:
+        logger.warning(f"Failed to clean up temp directory {tmp_dir}: {exc}")
 
     # Return JSON summary; include session id and paths
     report["session_id"] = session_id
