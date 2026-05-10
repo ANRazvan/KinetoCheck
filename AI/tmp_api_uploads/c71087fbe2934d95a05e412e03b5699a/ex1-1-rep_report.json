@@ -1,0 +1,168 @@
+{
+  "video": "D:\\Programming\\KinetoCheck\\AI\\tmp_api_uploads\\c71087fbe2934d95a05e412e03b5699a\\ex1-1-rep.mp4",
+  "annotated_video": "D:\\Programming\\KinetoCheck\\AI\\tmp_api_uploads\\c71087fbe2934d95a05e412e03b5699a\\ex1-1-rep_annotated.mp4",
+  "annotated_video_codec": "avc1",
+  "num_frames": 154,
+  "has_phase_decoder": true,
+  "ghost_anchor": "hips",
+  "worst_joints": [
+    {
+      "joint": "left_foot_index",
+      "joint_index": 15,
+      "deviation": 1.6406581401824951,
+      "importance": 0.35331541299819946,
+      "problem_score": 0.8587244749069214
+    },
+    {
+      "joint": "left_elbow",
+      "joint_index": 3,
+      "deviation": 1.5753233432769775,
+      "importance": 0.47060301899909973,
+      "problem_score": 0.9207180142402649
+    },
+    {
+      "joint": "right_foot_index",
+      "joint_index": 16,
+      "deviation": 1.522478699684143,
+      "importance": 0.5020991563796997,
+      "problem_score": 0.9244562387466431
+    },
+    {
+      "joint": "left_heel",
+      "joint_index": 13,
+      "deviation": 1.486711025238037,
+      "importance": 0.45054593682289124,
+      "problem_score": 0.8736245632171631
+    },
+    {
+      "joint": "left_wrist",
+      "joint_index": 5,
+      "deviation": 1.4607126712799072,
+      "importance": 0.527387261390686,
+      "problem_score": 0.9203858375549316
+    }
+  ],
+  "best": {
+    "exercise_id": 2,
+    "exercise_name": "exercise_03",
+    "score": 0.981766939163208,
+    "threshold": 0.05,
+    "raw_threshold": -0.23226046562194824,
+    "margin": 0.931766939163208,
+    "predicted_label": "correct",
+    "checkpoint": "D:\\Programming\\KinetoCheck\\AI\\checkpoints\\uiprmd_phase_aware_claude2\\exercise_03\\best_checkpoint.pt",
+    "has_phase_decoder": true
+  },
+  "all": [
+    {
+      "exercise_id": 2,
+      "exercise_name": "exercise_03",
+      "score": 0.981766939163208,
+      "threshold": 0.05,
+      "raw_threshold": -0.23226046562194824,
+      "margin": 0.931766939163208,
+      "predicted_label": "correct",
+      "checkpoint": "D:\\Programming\\KinetoCheck\\AI\\checkpoints\\uiprmd_phase_aware_claude2\\exercise_03\\best_checkpoint.pt",
+      "has_phase_decoder": true
+    },
+    {
+      "exercise_id": 4,
+      "exercise_name": "exercise_05",
+      "score": 0.6702415943145752,
+      "threshold": 0.05,
+      "raw_threshold": -0.43030601739883423,
+      "margin": 0.6202415943145752,
+      "predicted_label": "correct",
+      "checkpoint": "D:\\Programming\\KinetoCheck\\AI\\checkpoints\\uiprmd_phase_aware_claude2\\exercise_05\\best_checkpoint.pt",
+      "has_phase_decoder": true
+    },
+    {
+      "exercise_id": 1,
+      "exercise_name": "exercise_02",
+      "score": 0.6788259744644165,
+      "threshold": 0.42244309186935425,
+      "raw_threshold": 0.42244309186935425,
+      "margin": 0.25638288259506226,
+      "predicted_label": "correct",
+      "checkpoint": "D:\\Programming\\KinetoCheck\\AI\\checkpoints\\uiprmd_phase_aware_claude2\\exercise_02\\best_checkpoint.pt",
+      "has_phase_decoder": true
+    },
+    {
+      "exercise_id": 6,
+      "exercise_name": "exercise_07",
+      "score": 0.0726696327328682,
+      "threshold": 0.05,
+      "raw_threshold": 0.028660953044891357,
+      "margin": 0.022669632732868192,
+      "predicted_label": "correct",
+      "checkpoint": "D:\\Programming\\KinetoCheck\\AI\\checkpoints\\uiprmd_phase_aware_claude2\\exercise_07\\best_checkpoint.pt",
+      "has_phase_decoder": true
+    },
+    {
+      "exercise_id": 3,
+      "exercise_name": "exercise_04",
+      "score": 0.985930860042572,
+      "threshold": 0.9683634042739868,
+      "raw_threshold": 0.9683634042739868,
+      "margin": 0.017567455768585205,
+      "predicted_label": "correct",
+      "checkpoint": "D:\\Programming\\KinetoCheck\\AI\\checkpoints\\uiprmd_phase_aware_claude2\\exercise_04\\best_checkpoint.pt",
+      "has_phase_decoder": true
+    },
+    {
+      "exercise_id": 8,
+      "exercise_name": "exercise_09",
+      "score": 0.9999427199363708,
+      "threshold": 0.9999471306800842,
+      "raw_threshold": 0.9999471306800842,
+      "margin": -4.410743713378906e-06,
+      "predicted_label": "incorrect",
+      "checkpoint": "D:\\Programming\\KinetoCheck\\AI\\checkpoints\\uiprmd_phase_aware_claude2\\exercise_09\\best_checkpoint.pt",
+      "has_phase_decoder": true
+    },
+    {
+      "exercise_id": 9,
+      "exercise_name": "exercise_10",
+      "score": 0.9996913075447083,
+      "threshold": 0.9998173713684082,
+      "raw_threshold": 0.9998173713684082,
+      "margin": -0.00012606382369995117,
+      "predicted_label": "incorrect",
+      "checkpoint": "D:\\Programming\\KinetoCheck\\AI\\checkpoints\\uiprmd_phase_aware_claude2\\exercise_10\\best_checkpoint.pt",
+      "has_phase_decoder": true
+    },
+    {
+      "exercise_id": 7,
+      "exercise_name": "exercise_08",
+      "score": 0.9997251033782959,
+      "threshold": 0.9999784827232361,
+      "raw_threshold": 0.9999784827232361,
+      "margin": -0.00025337934494018555,
+      "predicted_label": "incorrect",
+      "checkpoint": "D:\\Programming\\KinetoCheck\\AI\\checkpoints\\uiprmd_phase_aware_claude2\\exercise_08\\best_checkpoint.pt",
+      "has_phase_decoder": true
+    },
+    {
+      "exercise_id": 5,
+      "exercise_name": "exercise_06",
+      "score": -0.4841282367706299,
+      "threshold": 0.05,
+      "raw_threshold": -0.19885843992233276,
+      "margin": -0.5341282367706299,
+      "predicted_label": "incorrect",
+      "checkpoint": "D:\\Programming\\KinetoCheck\\AI\\checkpoints\\uiprmd_phase_aware_claude2\\exercise_06\\best_checkpoint.pt",
+      "has_phase_decoder": true
+    },
+    {
+      "exercise_id": 0,
+      "exercise_name": "exercise_01",
+      "score": -0.7691465020179749,
+      "threshold": 0.05,
+      "raw_threshold": -0.29268866777420044,
+      "margin": -0.8191465020179749,
+      "predicted_label": "incorrect",
+      "checkpoint": "D:\\Programming\\KinetoCheck\\AI\\checkpoints\\uiprmd_phase_aware_claude2\\exercise_01\\best_checkpoint.pt",
+      "has_phase_decoder": true
+    }
+  ]
+}

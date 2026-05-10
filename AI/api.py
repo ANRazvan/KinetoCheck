@@ -1,0 +1,110 @@
+from __future__ import annotations
+
+import shutil
+import sys
+import uuid
+from pathlib import Path
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form
+from fastapi.responses import JSONResponse
+
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(
+    title="KinetoCheck Inference API",
+    description="Upload a video and get AI-powered exercise form analysis.",
+)
+
+# Find workspace root: api.py is in AI/ subfolder, so go up one level
+BASE_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(BASE_DIR))
+
+TMP_DIR = BASE_DIR / "tmp_api_uploads"
+TMP_DIR.mkdir(exist_ok=True)
+
+
+@app.get("/")
+def root():
+    """Health check and API info."""
+    return {
+        "service": "KinetoCheck Inference API",
+        "status": "running",
+        "docs": "http://127.0.0.1:8000/docs",
+        "endpoint": "POST /analyze-video/",
+    }
+
+
+@app.post("/analyze-video/")
+async def analyze_video(video: UploadFile = File(...), exercise_id: str = Form("auth")):
+    if not video.filename.lower().endswith(('.mp4', '.mov', '.mkv', '.avi', '.webm')):
+        raise HTTPException(status_code=400, detail="Unsupported file type")
+
+    # Save uploaded file to a temp path
+    session_id = uuid.uuid4().hex
+    tmp_dir = TMP_DIR / session_id
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    tmp_path = tmp_dir / video.filename
+
+    with tmp_path.open("wb") as f:
+        shutil.copyfileobj(video.file, f)
+
+    # Import local processing function
+    try:
+        from phase_aware.video_checkpoint_inference_phase_aware import (
+            process_video,
+        )
+        from Preprocessing.UIPRMDPreprocessor import UIPRMDPreprocessor
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to import processing module: {exc}")
+
+    # Minimal runtime setup mirroring app.get runtime
+    try:
+        from phase_aware.video_checkpoint_inference_phase_aware import ensure_pose_task_model, load_models, resolve_device
+        device = resolve_device("auto")
+        checkpoints_root = BASE_DIR / "checkpoints" / "uiprmd_phase_aware_rom"
+        all_models = load_models(checkpoints_root, device)
+        preprocessor = UIPRMDPreprocessor()
+        pose_model_path = ensure_pose_task_model(None)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to initialize model runtime: {exc}")
+
+    # Filter models based on selected exercise
+    models_to_run = all_models
+    logger.info(f"Received exercise_id: {exercise_id}")
+    if exercise_id and exercise_id != "auto":
+        try:
+            target_id = int(exercise_id) - 1  # Convert 1-indexed to 0-indexed
+            logger.info(f"Filtering models for exercise_id={exercise_id} (target_id={target_id})")
+            models_to_run = [m for m in all_models if m.exercise_id == target_id]
+            for m in models_to_run:
+                logger.info(f"Selected model for exercise {m.exercise_id}")
+            if not models_to_run:
+                raise HTTPException(status_code=400, detail=f"No model found for exercise {exercise_id}")
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid exercise_id: {exercise_id}")
+
+    # Run processing (synchronous call)
+    try:
+        report = process_video(
+            video_path=tmp_path,
+            models=models_to_run,
+            preprocessor=preprocessor,
+            output_dir=tmp_dir,
+            device=device,
+            pose_model_path=pose_model_path,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Processing failed: {exc}")
+
+    # Return JSON summary; include session id and paths
+    report["session_id"] = session_id
+    return JSONResponse(content=report)
+
+
+def __main__():
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8000)
+
+if __name__ == "__main__":
+    __main__()

@@ -1,0 +1,168 @@
+{
+  "video": "D:\\Programming\\KinetoCheck\\AI\\tmp_api_uploads\\f0307f58ec944ecfbf0a1fb484bf6078\\ex8-2-rep-inc.mp4",
+  "annotated_video": "D:\\Programming\\KinetoCheck\\AI\\tmp_api_uploads\\f0307f58ec944ecfbf0a1fb484bf6078\\ex8-2-rep-inc_annotated.mp4",
+  "annotated_video_codec": "avc1",
+  "num_frames": 163,
+  "has_phase_decoder": true,
+  "ghost_anchor": "hips",
+  "worst_joints": [
+    {
+      "joint": "nose",
+      "joint_index": 0,
+      "deviation": 0.0031289232429116964,
+      "importance": 0.495364248752594,
+      "problem_score": 0.9942694902420044
+    },
+    {
+      "joint": "right_elbow",
+      "joint_index": 4,
+      "deviation": 0.003127982374280691,
+      "importance": 0.45390909910202026,
+      "problem_score": 0.9610941410064697
+    },
+    {
+      "joint": "right_shoulder",
+      "joint_index": 2,
+      "deviation": 0.0031242219265550375,
+      "importance": 0.5025641322135925,
+      "problem_score": 0.999098539352417
+    },
+    {
+      "joint": "left_heel",
+      "joint_index": 13,
+      "deviation": 0.003120712237432599,
+      "importance": 0.26190268993377686,
+      "problem_score": 0.8068786859512329
+    },
+    {
+      "joint": "left_ankle",
+      "joint_index": 11,
+      "deviation": 0.003118649823591113,
+      "importance": 0.3324263095855713,
+      "problem_score": 0.8626141548156738
+    }
+  ],
+  "best": {
+    "exercise_id": 1,
+    "exercise_name": "exercise_02",
+    "score": 0.9874577522277832,
+    "threshold": 0.06014728546142578,
+    "raw_threshold": 0.06014728546142578,
+    "margin": 0.9273104667663574,
+    "predicted_label": "correct",
+    "checkpoint": "D:\\Programming\\KinetoCheck\\AI\\checkpoints\\uiprmd_phase_aware_rom\\exercise_02\\best_checkpoint.pt",
+    "has_phase_decoder": true
+  },
+  "all": [
+    {
+      "exercise_id": 1,
+      "exercise_name": "exercise_02",
+      "score": 0.9874577522277832,
+      "threshold": 0.06014728546142578,
+      "raw_threshold": 0.06014728546142578,
+      "margin": 0.9273104667663574,
+      "predicted_label": "correct",
+      "checkpoint": "D:\\Programming\\KinetoCheck\\AI\\checkpoints\\uiprmd_phase_aware_rom\\exercise_02\\best_checkpoint.pt",
+      "has_phase_decoder": true
+    },
+    {
+      "exercise_id": 7,
+      "exercise_name": "exercise_08",
+      "score": 0.9169947504997253,
+      "threshold": 0.05,
+      "raw_threshold": -0.5523797869682312,
+      "margin": 0.8669947504997253,
+      "predicted_label": "correct",
+      "checkpoint": "D:\\Programming\\KinetoCheck\\AI\\checkpoints\\uiprmd_phase_aware_rom\\exercise_08\\best_checkpoint.pt",
+      "has_phase_decoder": true
+    },
+    {
+      "exercise_id": 6,
+      "exercise_name": "exercise_07",
+      "score": 0.8006473779678345,
+      "threshold": 0.05,
+      "raw_threshold": -0.3870173692703247,
+      "margin": 0.7506473779678344,
+      "predicted_label": "correct",
+      "checkpoint": "D:\\Programming\\KinetoCheck\\AI\\checkpoints\\uiprmd_phase_aware_rom\\exercise_07\\best_checkpoint.pt",
+      "has_phase_decoder": true
+    },
+    {
+      "exercise_id": 5,
+      "exercise_name": "exercise_06",
+      "score": 0.7962011694908142,
+      "threshold": 0.05,
+      "raw_threshold": 0.026867538690567017,
+      "margin": 0.7462011694908142,
+      "predicted_label": "correct",
+      "checkpoint": "D:\\Programming\\KinetoCheck\\AI\\checkpoints\\uiprmd_phase_aware_rom\\exercise_06\\best_checkpoint.pt",
+      "has_phase_decoder": true
+    },
+    {
+      "exercise_id": 8,
+      "exercise_name": "exercise_09",
+      "score": 0.7167747020721436,
+      "threshold": 0.44488680362701416,
+      "raw_threshold": 0.44488680362701416,
+      "margin": 0.2718878984451294,
+      "predicted_label": "correct",
+      "checkpoint": "D:\\Programming\\KinetoCheck\\AI\\checkpoints\\uiprmd_phase_aware_rom\\exercise_09\\best_checkpoint.pt",
+      "has_phase_decoder": true
+    },
+    {
+      "exercise_id": 0,
+      "exercise_name": "exercise_01",
+      "score": 0.8907953500747681,
+      "threshold": 0.8855084776878357,
+      "raw_threshold": 0.8855084776878357,
+      "margin": 0.005286872386932373,
+      "predicted_label": "correct",
+      "checkpoint": "D:\\Programming\\KinetoCheck\\AI\\checkpoints\\uiprmd_phase_aware_rom\\exercise_01\\best_checkpoint.pt",
+      "has_phase_decoder": true
+    },
+    {
+      "exercise_id": 2,
+      "exercise_name": "exercise_03",
+      "score": 0.23185816407203674,
+      "threshold": 0.2325887829065323,
+      "raw_threshold": 0.2325887829065323,
+      "margin": -0.0007306188344955444,
+      "predicted_label": "incorrect",
+      "checkpoint": "D:\\Programming\\KinetoCheck\\AI\\checkpoints\\uiprmd_phase_aware_rom\\exercise_03\\best_checkpoint.pt",
+      "has_phase_decoder": true
+    },
+    {
+      "exercise_id": 9,
+      "exercise_name": "exercise_10",
+      "score": 0.9426852464675903,
+      "threshold": 0.9904628396034241,
+      "raw_threshold": 0.9904628396034241,
+      "margin": -0.04777759313583374,
+      "predicted_label": "incorrect",
+      "checkpoint": "D:\\Programming\\KinetoCheck\\AI\\checkpoints\\uiprmd_phase_aware_rom\\exercise_10\\best_checkpoint.pt",
+      "has_phase_decoder": true
+    },
+    {
+      "exercise_id": 4,
+      "exercise_name": "exercise_05",
+      "score": -0.31252649426460266,
+      "threshold": 0.05,
+      "raw_threshold": -0.6631858944892883,
+      "margin": -0.36252649426460265,
+      "predicted_label": "incorrect",
+      "checkpoint": "D:\\Programming\\KinetoCheck\\AI\\checkpoints\\uiprmd_phase_aware_rom\\exercise_05\\best_checkpoint.pt",
+      "has_phase_decoder": true
+    },
+    {
+      "exercise_id": 3,
+      "exercise_name": "exercise_04",
+      "score": -0.11911603808403015,
+      "threshold": 0.8013956546783447,
+      "raw_threshold": 0.8013956546783447,
+      "margin": -0.9205116927623749,
+      "predicted_label": "incorrect",
+      "checkpoint": "D:\\Programming\\KinetoCheck\\AI\\checkpoints\\uiprmd_phase_aware_rom\\exercise_04\\best_checkpoint.pt",
+      "has_phase_decoder": true
+    }
+  ]
+}

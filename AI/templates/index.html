@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KinetoCheck Analysis</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f8fafc;
+      --panel: #ffffff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --accent: #2563eb;
+      --accent-strong: #1d4ed8;
+      --border: #e2e8f0;
+      --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+      --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+      --radius: 8px;
+    }
+    
+    * { box-sizing: border-box; }
+    
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      color: var(--text);
+      background-color: var(--bg);
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+
+    .shell {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 40px 24px;
+    }
+
+    .header-bar {
+      margin-bottom: 32px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 24px;
+    }
+
+    .header-bar h1 {
+      margin: 0;
+      font-size: 2rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: #0f172a;
+    }
+
+    .header-bar p {
+      margin: 8px 0 0 0;
+      color: var(--muted);
+      font-size: 1.1rem;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 32px;
+      align-items: start;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+      padding: 32px;
+    }
+
+    .panel-header {
+      margin-top: 0;
+      margin-bottom: 24px;
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: #1e293b;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 500;
+      font-size: 0.9rem;
+      color: #334155;
+    }
+    
+    input[type=file], select {
+      width: 100%;
+      padding: 10px 14px;
+      background: #f8fafc;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      font-family: inherit;
+      font-size: 0.95rem;
+      margin-bottom: 20px;
+      color: var(--text);
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    input[type=file]:focus, select:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+      background: #ffffff;
+    }
+
+    select {
+      cursor: pointer;
+      appearance: none;
+      background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%2364748b%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%3E%3C%2Fpolyline%3E%3C%2Fsvg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      background-size: 16px auto;
+      padding-right: 40px;
+    }
+
+    .drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 32px 24px;
+      text-align: center;
+      background: #f8fafc;
+      margin-bottom: 24px;
+    }
+
+    .drop-zone label {
+      font-weight: 600;
+      color: #0f172a;
+      margin-bottom: 12px;
+      font-size: 1rem;
+    }
+
+    button {
+      appearance: none;
+      border: 0;
+      border-radius: 6px;
+      padding: 12px 24px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: white;
+      background: var(--accent);
+      cursor: pointer;
+      width: 100%;
+      font-family: inherit;
+      transition: background-color 0.15s ease;
+    }
+
+    button:hover {
+      background: var(--accent-strong);
+    }
+    
+    .error {
+      padding: 16px;
+      border-radius: 6px;
+      margin-bottom: 24px;
+      background: #fef2f2;
+      color: #b91c1c;
+      border: 1px solid #fecaca;
+      font-weight: 500;
+      font-size: 0.95rem;
+    }
+
+    .notice {
+      padding: 16px;
+      border-radius: 6px;
+      margin-bottom: 20px;
+      background: #fffbeb;
+      color: #b45309;
+      border: 1px solid #fde68a;
+      font-size: 0.95rem;
+    }
+    
+    .video-container {
+      width: 100%;
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: #000;
+      border: 1px solid var(--border);
+      margin-bottom: 16px;
+    }
+
+    video { 
+      width: 100%; 
+      display: block; 
+    }
+    
+    .results-grid { 
+      display: grid; 
+      gap: 12px; 
+      margin-bottom: 24px;
+    }
+
+    .result-row {
+      padding: 12px 16px;
+      border-radius: 6px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .result-row strong { 
+      color: var(--muted); 
+      font-size: 0.85rem; 
+      text-transform: uppercase; 
+      letter-spacing: 0.05em; 
+      font-weight: 600;
+    }
+
+    .result-row div { 
+      font-weight: 600; 
+      color: #0f172a;
+      font-size: 0.95rem;
+    }
+    
+    .download-btn {
+      display: inline-flex;
+      justify-content: center;
+      width: 100%;
+      background: #f1f5f9;
+      color: #334155;
+      font-weight: 600;
+      text-decoration: none;
+      padding: 10px 0;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      transition: all 0.15s ease;
+      font-size: 0.95rem;
+    }
+
+    .download-btn:hover { 
+      background: #e2e8f0; 
+      color: #0f172a;
+    }
+    
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 24px;
+      font-size: 0.9rem;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 12px 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    th { 
+      color: var(--muted); 
+      font-weight: 600; 
+    }
+
+    td { 
+      color: #334155;
+    }
+
+    .sys-note {
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-top: 16px;
+      text-align: center;
+    }
+    
+    @media (max-width: 920px) {
+      .grid { grid-template-columns: 1fr; }
+      .shell { padding: 24px 16px; }
+      .panel { padding: 24px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    
+    <header class="header-bar">
+      <h1>KinetoCheck</h1>
+      <p>Kinematic Phase-Aware Assessment System</p>
+    </header>
+
+    {% if error %}
+      <div class="error">{{ error }}</div>
+    {% endif %}
+
+    <section class="grid">
+      
+      <!-- Input Panel -->
+      <div class="panel">
+        <h2 class="panel-header">Upload Configuration</h2>
+        
+        <form method="post" enctype="multipart/form-data">
+          <label for="exercise">Target Assessment</label>
+          <select id="exercise" name="exercise_id" required>
+            <option value="auto">System Auto-detect (Run all models)</option>
+            {% for ex in available_exercises %}
+              <option value="{{ ex.id }}">{{ ex.name }}</option>
+            {% endfor %}
+          </select>
+
+          <div class="drop-zone">
+            <label for="video">Source Video File</label>
+            <input id="video" name="video" type="file" accept="video/*" required />
+            <p style="margin: 0; font-size: 0.85rem; color: var(--muted);">Supported formats: MP4, MOV, MKV, AVI</p>
+          </div>
+          
+          <button type="submit">Process Video Sequence</button>
+        </form>
+        
+        <p class="sys-note">System initialization (model loading) may cause latency on the first request.</p>
+      </div>
+
+      <!-- Output Panel -->
+      <div class="panel">
+        <h2 class="panel-header">Analysis Results</h2>
+        
+        {% if report %}
+          {% if codec_warning %}
+            <div class="notice">{{ codec_warning }}</div>
+          {% endif %}
+          
+          <div class="results-grid">
+            <div class="result-row">
+              <strong>Predicted Class</strong>
+              <div>{{ best.exercise_name }} ({{ best.predicted_label }})</div>
+            </div>
+            <div class="result-row">
+              <strong>Confidence Score</strong>
+              <div>{{ '%.3f'|format(best.score) }} / {{ '%.3f'|format(best.threshold) }} req.</div>
+            </div>
+            {% if feedback_summary %}
+              <div class="result-row" style="flex-direction: column; align-items: flex-start; gap: 8px;">
+                <strong>System Feedback</strong>
+                <div style="font-weight: 400; color: #334155;">{{ feedback_summary }}</div>
+              </div>
+            {% endif %}
+            <div class="result-row">
+              <strong>Kinematic Deviations</strong>
+              <div style="color: #b91c1c;">{{ worst_summary }}</div>
+            </div>
+          </div>
+          
+          <div class="video-container">
+            <video controls preload="metadata">
+              <source src="{{ annotated_url }}" type="video/mp4" />
+            </video>
+          </div>
+          
+          <a href="{{ annotated_url }}" class="download-btn" download>Download Annotated Sequence</a>
+          
+          <table>
+            <thead>
+              <tr>
+                <th>Exercise Target</th>
+                <th>Classification</th>
+                <th>Score</th>
+                <th>Margin</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in all_results[:5] %}
+                <tr>
+                  <td>{{ row.exercise_name }}</td>
+                  <td>{{ row.predicted_label }}</td>
+                  <td>{{ '%.3f'|format(row.score) }}</td>
+                  <td>{{ '%.3f'|format(row.margin) }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          
+        {% else %}
+          <div style="padding: 40px 0; text-align: center; color: var(--muted);">
+            <svg style="width: 48px; height: 48px; margin-bottom: 16px; opacity: 0.5;" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+            <p style="margin: 0;">Awaiting video upload for processing.</p>
+          </div>
+        {% endif %}
+      </div>
+      
+    </section>
+  </div>
+</body>
+</html>
