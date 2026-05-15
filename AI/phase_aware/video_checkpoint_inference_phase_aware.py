@@ -1,47 +1,4 @@
-"""
-Video inference with phase-aware pose overlay and per-joint corrective feedback.
 
-FIXES IN THIS VERSION
-=====================
-
-FIX A — Axis mapping: auto-detect camera orientation from data
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Old code hardcoded Vicon-Y → Screen-X. If the capture camera was facing the
-subject from the front, Vicon-X is depth (into camera) and Vicon-Y is lateral.
-If facing from the side, it's the opposite. The fix: try both X and Y as the
-lateral axis, pick the one that produces wider shoulder separation in the
-projected template — that's the correct camera-facing axis. This is computed
-once per sequence from the template data, not hardcoded.
-
-FIX B — Single-pass proportional scaling
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Old code scaled height globally, then independently scaled X using shoulder
-width. This distorted body proportions. Fix: use a single uniform scale
-(nose-to-midfoot), then apply a SINGLE translation to anchor feet. No
-independent X rescaling — the ghost is a rigid rescaled version of the template.
-
-FIX C — Phase-locked frame timing
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Old code used a linear remap from video frame index to model frame index. But
-the model operates at its own internal temporal resolution (T_u frames) that
-does not match the video frame count. Fix: precompute a per-video-frame lookup
-table that maps each video frame to the correct model frame using the actual
-warp weight argmax, so the ghost skeleton is always in the phase-correct pose.
-
-FIX D — Ghost computed from phase-aligned warp, user body measured once
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Old code resampled user_seq inside compute_perfect_ghost, causing the user body
-dimensions to drift from the actual per-frame measurements. Fix: measure user
-body scale from the raw sequence once (median over all frames, robust to
-outliers), and apply that scale to the ghost in one pass.
-
-FIX E — Temporal correlation display in HUD
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Added a per-joint temporal correlation score shown in the HUD. This is the
-Pearson correlation between the ghost joint trajectory and the user joint
-trajectory over the sliding window around the current frame, giving a real-time
-readout of "how in sync is this joint right now" rather than just average error.
-"""
 
 from __future__ import annotations
 

@@ -1,32 +1,3 @@
-"""
-Train one ST-GAT ExerciseEvaluator per UI-PRMD exercise.
-
-Changes vs. original
---------------------
-- Optionally trains the FrameDecoder with DeltaRegressionLoss (aux loss).
-- Checkpoints now store extra metadata needed by inference:
-    preprocessor_config, feature_channels, in_channels,
-    hidden_channels, embedding_dim, use_phase_decoder
-- All new fields are added alongside the existing ones so old loaders
-  that only read model_state_dict / template_tensor / val_threshold
-  continue to work.
-- CLI gains --delta-weight (float, default 0.1) and
-  --no-phase-decoder (flag to disable the new head entirely).
-
-FIX (overlay bug):
-- build_raw_xyz_template no longer calls align_vicon_to_mediapipe() or
-  preprocessor.process().
-  * align_vicon_to_mediapipe() subtracts the hip midpoint — output is in
-    body-centred metric space, NOT image-fraction [0,1].
-  * preprocessor.process() z-scores on top of that — even further off.
-  * The ghost overlay needs image-fraction XY so joints map to pixels.
-  * For MediaPipe datasets: record["sequence"] already contains raw
-    image-fraction XY; we use that directly.
-  * For Vicon datasets: image fractions are unavailable; we fall back to
-    body-centred coords (overlay will be approximate).
-- Variable-length sequences are resampled to the median length via linear
-  interpolation before averaging (fixes RuntimeError: stack expects equal size).
-"""
 
 from __future__ import annotations
 

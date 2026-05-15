@@ -3,6 +3,7 @@ using System.Text.Json;
 using App.Data;
 using App.Models;
 using App.ViewModels;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -46,9 +47,10 @@ public class HomeController : Controller
         _userManager = userManager;
     }
 
-    public async Task<IActionResult> Index()
+    public async Task<IActionResult> Index(string? exercise_id)
     {
-        var model = await BuildDashboardViewModelAsync("auto");
+        var selected = string.IsNullOrWhiteSpace(exercise_id) ? "auto" : exercise_id;
+        var model = await BuildDashboardViewModelAsync(selected);
         return View(model);
     }
 
@@ -60,14 +62,14 @@ public class HomeController : Controller
         var model = await BuildDashboardViewModelAsync(selectedExerciseId);
 
         _logger.LogInformation("Selected exercise ID: {ExerciseId}", selectedExerciseId);
+        string tmpFolder = Path.Combine(Path.GetTempPath(), "kinetocheck_uploads");
+        Directory.CreateDirectory(tmpFolder);
+
         if (videoFile == null || videoFile.Length == 0)
         {
             ModelState.AddModelError(string.Empty, "Please select a video file to upload.");
             return View("Index", model);
         }
-
-        var tmpFolder = Path.Combine(Path.GetTempPath(), "kinetocheck_uploads");
-        Directory.CreateDirectory(tmpFolder);
 
         var tmpFile = Path.Combine(tmpFolder, $"{Guid.NewGuid():N}_{Path.GetFileName(videoFile.FileName)}");
         await using (var stream = System.IO.File.Create(tmpFile))
@@ -80,7 +82,7 @@ public class HomeController : Controller
             using var client = _httpClientFactory.CreateClient("AnalysisService");
             using var content = new MultipartFormDataContent();
             await using var fs = System.IO.File.OpenRead(tmpFile);
-            content.Add(new StreamContent(fs), "video", Path.GetFileName(videoFile.FileName));
+            content.Add(new StreamContent(fs), "video", Path.GetFileName(tmpFile));
             content.Add(new StringContent(selectedExerciseId), "exercise_id");
 
             HttpResponseMessage resp;
@@ -107,7 +109,7 @@ public class HomeController : Controller
 
             var currentUserId = _userManager.GetUserId(User);
             var analyzedAtUtc = DateTimeOffset.UtcNow;
-            var originalFileName = Path.GetFileName(videoFile.FileName);
+            var originalFileName = Path.GetFileName(tmpFile);
             var assessedExercise = GetStringOrDefault(root, "best", "exercise_name") ?? selectedExerciseId;
             var predictedLabel = GetStringOrDefault(root, "best", "predicted_label") ?? "Unknown";
             var score = GetDecimalOrDefault(root, "best", "score");
@@ -386,7 +388,7 @@ public class HomeController : Controller
             .Select(group => group.Key)
             .FirstOrDefault();
 
-        return new HomeIndexViewModel
+        var vm = new HomeIndexViewModel
         {
             SelectedExerciseId = selectedExerciseId,
             AvailableExercises = ExerciseOptions,
@@ -407,8 +409,80 @@ public class HomeController : Controller
             }).ToList(),
             LatestResult = latestResult
         };
-    }
 
+        // Populate sample video URLs by scanning wwwroot/samples for filenames like exercise_01_correct.mp4
+        try
+        {
+            var samplesRoot = Path.Combine(_environment.WebRootPath, "samples");
+            List<string> correct = new();
+            List<string> incorrect = new();
+
+            // Only enumerate samples when a concrete exercise is selected
+            if (!string.Equals(selectedExerciseId, "auto", StringComparison.OrdinalIgnoreCase) && Directory.Exists(samplesRoot))
+            {
+                var files = Directory.EnumerateFiles(samplesRoot, "*.*", SearchOption.AllDirectories)
+                    .Where(p => p.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase) || p.EndsWith(".webm", StringComparison.OrdinalIgnoreCase) || p.EndsWith(".mov", StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(p => p);
+
+                var rx = new Regex("exercise[_-]?0*([0-9]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var webDir = Path.Combine(samplesRoot, "web");
+
+                foreach (var f in files)
+                {
+                    // skip files in the web cache directory to avoid duplicates
+                    if (!string.IsNullOrEmpty(webDir) && f.StartsWith(webDir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    var fn = Path.GetFileName(f);
+                    if (seen.Contains(fn)) continue;
+                    seen.Add(fn);
+
+                    var m = rx.Match(fn);
+                    if (!m.Success)
+                    {
+                        continue;
+                    }
+
+                    var num = m.Groups[1].Value; // e.g. "1" or "01"
+                    // match selectedExerciseId (allow "auto" to show nothing)
+                    if (!string.Equals(selectedExerciseId, "auto", StringComparison.OrdinalIgnoreCase) && num != selectedExerciseId)
+                    {
+                        // also allow numeric compare (e.g. selected 1 vs filename 01)
+                        if (!int.TryParse(num, out var parsed) || parsed.ToString() != selectedExerciseId)
+                        {
+                            continue;
+                        }
+                    }
+
+                    var url = "/samples/preview/" + Uri.EscapeDataString(fn);
+
+                    var fnameLower = fn.ToLowerInvariant();
+                    // Prefer exact 'incorrect' match first because 'incorrect' contains 'correct'
+                    if (fnameLower.Contains("_incorrect") || fnameLower.Contains("-incorrect") || fnameLower.Contains("incorrect"))
+                    {
+                        incorrect.Add(url);
+                    }
+                    else if (fnameLower.Contains("_correct") || fnameLower.Contains("-correct") || fnameLower.Contains("correct"))
+                    {
+                        correct.Add(url);
+                    }
+                }
+            }
+
+            vm.SampleCorrectVideos = correct;
+            vm.SampleIncorrectVideos = incorrect;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to enumerate sample videos");
+        }
+
+        return vm;
+    }
     private string? CopyAnnotatedVideo(JsonElement root)
     {
         if (!root.TryGetProperty("annotated_video", out var annotatedVideo))

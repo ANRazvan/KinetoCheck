@@ -50,6 +50,54 @@
                     <div class="form-text">Use auto-detect if you want the model to pick the exercise.</div>
                 </div>
 
+                    @* Sample videos for the chosen exercise *@
+                    @if ((Model.SampleCorrectVideos?.Count ?? 0) > 0 || (Model.SampleIncorrectVideos?.Count ?? 0) > 0)
+                    {
+                        <div class="mb-3">
+                            <label class="form-label">Example videos</label>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <h6>Correct example</h6>
+                                    @if (Model.SampleCorrectVideos != null && Model.SampleCorrectVideos.Count > 0)
+                                    {
+                                        foreach (var url in Model.SampleCorrectVideos)
+                                        {
+                                                <div class="sample-card mb-2">
+                                                    <video width="220" controls preload="metadata" class="sample-thumb">
+                                                        <source src="@url" type="video/mp4" />
+                                                    </video>
+                                                </div>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <p class="text-muted">No correct samples available for this exercise.</p>
+                                    }
+                                </div>
+                                <div class="col-md-6">
+                                    <h6>Incorrect example</h6>
+                                    @if (Model.SampleIncorrectVideos != null && Model.SampleIncorrectVideos.Count > 0)
+                                    {
+                                        foreach (var url in Model.SampleIncorrectVideos)
+                                        {
+                                            <div class="sample-card mb-2">
+                                                <video width="220" controls preload="metadata" class="sample-thumb">
+                                                    <source src="@url" type="video/mp4" />
+                                                </video>
+                                            </div>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <p class="text-muted">No incorrect samples available for this exercise.</p>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    }
+
+                    <!-- sampleVideoPath removed: samples are preview-only and not submitted -->
+
                 <div class="form-group mb-3">
                     <label for="videoFile" class="form-label">Video file</label>
                     <input type="file" name="videoFile" id="videoFile" class="form-control form-control-lg" accept="video/*" required />
@@ -63,12 +111,46 @@
                     (function(){
                         const form = document.getElementById('uploadForm');
                         if (!form) return;
+                        const fileInput = document.getElementById('videoFile');
+                        const submitBtn = document.getElementById('uploadSubmit');
+
                         form.addEventListener('submit', function (e) {
-                            const btn = document.getElementById('uploadSubmit');
-                            if (!btn) return;
-                            btn.disabled = true;
-                            btn.innerText = 'Uploading...';
+                            if (submitBtn) {
+                                submitBtn.disabled = true;
+                                submitBtn.innerText = 'Uploading...';
+                            }
                         });
+
+                        // Thumbnail clicks load the sample into the main preview player
+                        const preview = document.getElementById('samplePreview');
+                        document.querySelectorAll('.sample-thumb').forEach(function (thumb) {
+                            thumb.addEventListener('click', function () {
+                                if (!preview) return;
+                                const srcEl = document.getElementById('samplePreviewSource');
+                                const thumbSource = this.querySelector('source');
+                                if (!thumbSource || !srcEl) return;
+                                const url = thumbSource.getAttribute('src');
+                                if (!url) return;
+                                try { preview.pause(); } catch (e) { }
+                                const cb = 'cb=' + Date.now();
+                                const sep = url.includes('?') ? '&' : '?';
+                                srcEl.setAttribute('src', url + sep + cb);
+                                preview.load();
+                                preview.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                preview.play().catch(() => { /* autoplay prevented */ });
+                            });
+                        });
+
+                        // When exercise selection changes, reload page to show samples for that exercise
+                        const exerciseSelect = document.getElementById('exerciseId');
+                        if (exerciseSelect) {
+                            exerciseSelect.addEventListener('change', function () {
+                                const val = this.value || 'auto';
+                                const url = new URL(window.location.href);
+                                url.searchParams.set('exercise_id', val);
+                                window.location.href = url.toString();
+                            });
+                        }
                     })();
                 </script>
             }

@@ -33,6 +33,11 @@ public class HomeIndexViewModel
     public string? LatestSummary { get; set; }
 
     public IReadOnlyList<JointInsightViewModel> LatestJointInsights { get; set; } = Array.Empty<JointInsightViewModel>();
+
+    // Sample videos for the selected exercise (relative URLs under /samples/{exerciseId}/...)
+    public IReadOnlyList<string> SampleCorrectVideos { get; set; } = Array.Empty<string>();
+
+    public IReadOnlyList<string> SampleIncorrectVideos { get; set; } = Array.Empty<string>();
 }
 
 public sealed record ExerciseOptionViewModel(string Id, string Name);

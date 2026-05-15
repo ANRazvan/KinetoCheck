@@ -1,38 +1,3 @@
-"""
-ST-GAT with Temporal Pyramid and Phase-Aware Feedback.
-
-Upgrade summary
----------------
-- PhaseAligner: soft-DTW-based temporal alignment that warps user frames
-  onto the template time axis so every frame gets a matching template pose.
-- FrameDecoder: a lightweight per-frame head that predicts correction deltas
-  (Δx, Δy, Δz per joint) relative to the phase-matched template.
-- JointScorer: per-joint error magnitude and confidence derived from
-  attention entropy and decoder deltas.
-- ExerciseEvaluator keeps the same encode() / forward() signature.
-  The new output dict is a superset of the old one, so existing training
-  code that only reads similarity_score is unaffected.
-- ContrastiveLoss is unchanged.
-
-Backward compatibility
-----------------------
-- Old checkpoints (without the decoder / phase head) can still be loaded:
-  call model.load_state_dict(ckpt, strict=False).  The decoder and phase
-  head will be freshly initialised and will produce noisy deltas until the
-  model is fine-tuned.  The similarity_score pathway is identical.
-
-FIX (overlay bug)
------------------
-- forward() now accepts an optional `template_xyz_raw` argument
-  (shape: (B, 3, T_t, J) in raw image-fraction space).
-- When provided, warped_template_xyz is computed by warping this raw tensor
-  through warp_weights instead of pulling from template_seq[:, :3].
-- template_seq[:, :3] contains preprocessed (hip-centred, z-scored) XYZ —
-  far outside [0,1] — so it was useless for pixel-space overlay.
-- Training code does NOT pass template_xyz_raw → backward compatible.
-- Inference code DOES pass it → overlay lands in frame.
-"""
-
 from __future__ import annotations
 
 from typing import Iterable
