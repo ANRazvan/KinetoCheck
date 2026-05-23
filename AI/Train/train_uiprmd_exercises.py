@@ -14,6 +14,8 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 from Models import ContrastiveLoss, ExerciseEvaluator
+from Models.factory import ModelFactory, LossFactory
+from Train.split_strategies import SplitPlan, build_split_plans
 from Preprocessing.UIPRMDPreprocessor import UIPRMDPreprocessor
 from Preprocessing.UIPRMD_loader import UIPRMDLoader
 
@@ -37,6 +39,7 @@ class TrainingConfig:
     patience: int = 10
     num_workers: int = 0
     device: str = "auto"
+    split_mode: str = "subject"
 
 
 class ExercisePairDataset(Dataset):
@@ -284,22 +287,37 @@ def evaluate(model: ExerciseEvaluator, loader: DataLoader, criterion: Contrastiv
     }
 
 
-def train_one_exercise(exercise_id: int, cfg: TrainingConfig) -> dict[str, float]:
+def train_one_exercise(
+    exercise_id: int,
+    cfg: TrainingConfig,
+    records: list[dict] | None = None,
+    split_plan: SplitPlan | None = None,
+) -> dict[str, float]:
     set_seed(cfg.seed + exercise_id)
 
     loader = UIPRMDLoader(cfg.data_root)
     preprocessor = UIPRMDPreprocessor()
-    records = loader.load_vicon_data(exercise_id=exercise_id)
+    if records is None:
+        records = loader.load_vicon_data(exercise_id=exercise_id)
     if not records:
         raise ValueError(f"No records found for exercise {exercise_id}.")
 
-    train_records, val_records, test_records = split_by_subject(
-        records,
-        train_ratio=cfg.train_ratio,
-        val_ratio=cfg.val_ratio,
-        test_ratio=cfg.test_ratio,
-        seed=cfg.seed,
-    )
+    if split_plan is None:
+        train_records, val_records, test_records = split_by_subject(
+            records,
+            train_ratio=cfg.train_ratio,
+            val_ratio=cfg.val_ratio,
+            test_ratio=cfg.test_ratio,
+            seed=cfg.seed,
+        )
+        fold_name = "subject_split"
+        held_out_subject = None
+    else:
+        train_records = split_plan.train_records
+        val_records = split_plan.val_records
+        test_records = split_plan.test_records
+        fold_name = split_plan.fold_name
+        held_out_subject = split_plan.held_out_subject
 
     if not train_records:
         raise ValueError(f"Training split is empty for exercise {exercise_id}.")
@@ -332,11 +350,11 @@ def train_one_exercise(exercise_id: int, cfg: TrainingConfig) -> dict[str, float
     )
 
     device = resolve_device(cfg.device)
-    model = ExerciseEvaluator(in_channels=9, hidden_channels=cfg.hidden_channels, embedding_dim=cfg.embedding_dim).to(device)
-    criterion = ContrastiveLoss(margin=cfg.margin)
+    model = ModelFactory().create_evaluator(in_channels=9, hidden_channels=cfg.hidden_channels, embedding_dim=cfg.embedding_dim, device=device)
+    criterion = LossFactory().create_contrastive(margin=cfg.margin)
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate, weight_decay=cfg.weight_decay)
 
-    exercise_dir = cfg.output_dir / f"exercise_{exercise_id + 1:02d}"
+    exercise_dir = cfg.output_dir / f"exercise_{exercise_id + 1:02d}" / fold_name
     exercise_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = exercise_dir / "metrics.csv"
     best_checkpoint_path = exercise_dir / "best_checkpoint.pt"
@@ -429,6 +447,9 @@ def train_one_exercise(exercise_id: int, cfg: TrainingConfig) -> dict[str, float
 
     summary = {
         "exercise_id": exercise_id,
+        "split_mode": cfg.split_mode,
+        "fold_name": fold_name,
+        "held_out_subject": held_out_subject,
         "best_epoch": best_epoch,
         "best_val_f1": best_val_f1,
         "best_test_loss": best_test_metrics.get("loss", 0.0),
@@ -467,6 +488,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--device", type=str, default="auto")
+    parser.add_argument("--split-mode", type=str, default="subject", choices=["subject", "loso"])
     return parser
 
 
@@ -492,15 +514,32 @@ def main(argv: Iterable[str] | None = None) -> None:
         patience=args.patience,
         num_workers=args.num_workers,
         device=args.device,
+        split_mode=args.split_mode,
     )
 
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
     summaries = []
     for exercise_id in config.exercise_ids:
-        summary = train_one_exercise(exercise_id, config)
-        summaries.append(summary)
-        print(json.dumps(summary, indent=2))
+        if config.split_mode == "loso":
+            exercise_loader = UIPRMDLoader(config.data_root)
+            exercise_records = exercise_loader.load_vicon_data(exercise_id=exercise_id)
+            split_plans = build_split_plans(
+                exercise_records,
+                config.split_mode,
+                config.train_ratio,
+                config.val_ratio,
+                config.test_ratio,
+                config.seed + exercise_id,
+            )
+            for split_plan in split_plans:
+                summary = train_one_exercise(exercise_id, config, records=exercise_records, split_plan=split_plan)
+                summaries.append(summary)
+                print(json.dumps(summary, indent=2))
+        else:
+            summary = train_one_exercise(exercise_id, config)
+            summaries.append(summary)
+            print(json.dumps(summary, indent=2))
 
     (config.output_dir / "all_exercises_summary.json").write_text(json.dumps(summaries, indent=2), encoding="utf-8")
 

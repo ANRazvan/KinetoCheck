@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import argparse
@@ -15,6 +14,8 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 from phase_aware import ContrastiveLoss, DeltaRegressionLoss, ExerciseEvaluator, RangeOfMotionLoss
+from Models.factory import ModelFactory, LossFactory
+from Train.split_strategies import SplitPlan, build_split_plans
 from Preprocessing.UIPRMDPreprocessor import UIPRMDPreprocessor, build_features_from_aligned
 from Preprocessing.UIPRMD_loader import UIPRMDLoader
 
@@ -45,6 +46,7 @@ class TrainingConfig:
     num_workers: int = 0
     device: str = "auto"
     use_phase_decoder: bool = True
+    split_mode: str = "subject"
 
 
 # ---------------------------------------------------------------------------
@@ -179,14 +181,14 @@ def split_by_subject(
 #     correct_records = [r for r in records if int(r["label"]) == 0]
 #     if not correct_records:
 #         raise ValueError("No correct samples to build a template.")
-
+#
 #     tensors = []
 #     for r in correct_records:
 #         aligned   = preprocessor.align_vicon_to_mediapipe(r["sequence"])
 #         processed = preprocessor.process(aligned)
 #         features  = build_features_from_aligned(processed)  # (12, T, 17)
 #         tensors.append(torch.from_numpy(features).float())
-
+#
 #     return torch.stack(tensors, dim=0).mean(dim=0)
 
 def build_template_tensor(
@@ -233,7 +235,7 @@ def _resample_to(arr: np.ndarray, target_T: int) -> np.ndarray:
 # def build_raw_xyz_template(records: list[dict], preprocessor: UIPRMDPreprocessor) -> torch.Tensor:
 #     """
 #     Build a template in RAW un-preprocessed XY coordinates for the overlay.
-
+#
 #     WHY NOT align_vicon_to_mediapipe() / preprocessor.process():
 #     -------------------------------------------------------------
 #     align_vicon_to_mediapipe() subtracts the hip midpoint, putting output
@@ -241,20 +243,20 @@ def _resample_to(arr: np.ndarray, target_T: int) -> np.ndarray:
 #     preprocessor.process() z-scores on top of that — even further off.
 #     The ghost overlay needs image-fraction XY (matching MediaPipe output at
 #     runtime) so joints map to the correct pixel positions.
-
+#
 #     Coordinate source:
 #     ------------------
 #     For MediaPipe datasets, record["sequence"] already contains raw
 #     image-fraction XY in shape (T, 17, 3) or flat (T, 51).  We use that.
 #     For Vicon datasets (39-joint), image fractions are unavailable; we fall
 #     back to body-centred coords — the overlay will be approximate.
-
+#
 #     Variable-length fix:
 #     --------------------
 #     Sequences have different frame counts.  We resample every sequence to
 #     the median length via linear interpolation before averaging, which fixes
 #     the "stack expects each tensor to be equal size" RuntimeError.
-
+#
 #     Returns
 #     -------
 #     torch.Tensor  shape (3, T, J)
@@ -264,13 +266,13 @@ def _resample_to(arr: np.ndarray, target_T: int) -> np.ndarray:
 #     correct_records = [r for r in records if int(r["label"]) == 0]
 #     if not correct_records:
 #         raise ValueError("No correct samples to build raw XYZ template.")
-
+#
 #     raw_list: list[np.ndarray] = []
 #     using_raw_image_fractions = True
-
+#
 #     for r in correct_records:
 #         seq = np.asarray(r["sequence"], dtype=np.float32)
-
+#
 #         if seq.ndim == 3 and seq.shape[1] == 17:
 #             # (T, 17, 3) — raw MediaPipe image-fraction XYZ
 #             raw_list.append(seq)
@@ -283,24 +285,24 @@ def _resample_to(arr: np.ndarray, target_T: int) -> np.ndarray:
 #             using_raw_image_fractions = False
 #             aligned = preprocessor.align_vicon_to_mediapipe(seq)  # (T, 17, 3)
 #             raw_list.append(aligned)
-
+#
 #     if not using_raw_image_fractions:
 #         print(
 #             "  [warn] build_raw_xyz_template: dataset appears to be Vicon data "
 #             "(not MediaPipe image fractions).  Ghost overlay will use "
 #             "body-centred coordinates — joint positions will be approximate."
 #         )
-
+#
 #     # Resample all sequences to the median frame count, then average.
 #     lengths = [a.shape[0] for a in raw_list]
 #     target_T = int(np.median(lengths))
-
+#
 #     tensors: list[torch.Tensor] = []
 #     for seq_arr in raw_list:
 #         resampled = _resample_to(seq_arr, target_T)          # (target_T, 17, 3)
 #         xyz = np.transpose(resampled, (2, 0, 1)).copy()      # (3, target_T, 17)
 #         tensors.append(torch.from_numpy(xyz).float())
-
+#
 #     return torch.stack(tensors, dim=0).mean(dim=0)           # (3, target_T, 17)
 
 def build_raw_xyz_template(
@@ -444,18 +446,33 @@ def evaluate(
 # Per-exercise training
 # ---------------------------------------------------------------------------
 
-def train_one_exercise(exercise_id: int, cfg: TrainingConfig) -> dict[str, float]:
+def train_one_exercise(
+    exercise_id: int,
+    cfg: TrainingConfig,
+    records: list[dict] | None = None,
+    split_plan: SplitPlan | None = None,
+) -> dict[str, float]:
     set_seed(cfg.seed + exercise_id)
 
     loader_ds    = UIPRMDLoader(cfg.data_root)
     preprocessor = UIPRMDPreprocessor()
-    records = loader_ds.load_vicon_data(exercise_id=exercise_id)
+    if records is None:
+        records = loader_ds.load_vicon_data(exercise_id=exercise_id)
     if not records:
         raise ValueError(f"No records found for exercise {exercise_id}.")
 
-    train_records, val_records, test_records = split_by_subject(
-        records, cfg.train_ratio, cfg.val_ratio, cfg.test_ratio, cfg.seed
-    )
+    if split_plan is None:
+        train_records, val_records, test_records = split_by_subject(
+            records, cfg.train_ratio, cfg.val_ratio, cfg.test_ratio, cfg.seed
+        )
+        fold_name = "subject_split"
+        held_out_subject = None
+    else:
+        train_records = split_plan.train_records
+        val_records = split_plan.val_records
+        test_records = split_plan.test_records
+        fold_name = split_plan.fold_name
+        held_out_subject = split_plan.held_out_subject
     if not train_records:
         raise ValueError(f"Training split is empty for exercise {exercise_id}.")
 
@@ -488,21 +505,23 @@ def train_one_exercise(exercise_id: int, cfg: TrainingConfig) -> dict[str, float
     )
 
     device = resolve_device(cfg.device)
-    model = ExerciseEvaluator(
+    model = ModelFactory().create_evaluator(
         in_channels=12,
         hidden_channels=cfg.hidden_channels,
         embedding_dim=cfg.embedding_dim,
         use_phase_decoder=cfg.use_phase_decoder,
-    ).to(device)
+        device=device,
+    )
 
-    criterion       = ContrastiveLoss(margin=cfg.margin)
-    delta_criterion = DeltaRegressionLoss() if cfg.use_phase_decoder else None
-    rom_criterion   = RangeOfMotionLoss(weight=cfg.rom_weight)
+    loss_factory = LossFactory()
+    criterion = loss_factory.create_contrastive(margin=cfg.margin)
+    delta_criterion = loss_factory.create_delta_regression() if cfg.use_phase_decoder else None
+    rom_criterion = loss_factory.create_rom_loss(weight=cfg.rom_weight)
     optimizer       = torch.optim.Adam(
         model.parameters(), lr=cfg.learning_rate, weight_decay=cfg.weight_decay
     )
 
-    exercise_dir         = cfg.output_dir / f"exercise_{exercise_id + 1:02d}"
+    exercise_dir         = cfg.output_dir / f"exercise_{exercise_id + 1:02d}" / fold_name
     exercise_dir.mkdir(parents=True, exist_ok=True)
     metrics_path         = exercise_dir / "metrics.csv"
     best_checkpoint_path = exercise_dir / "best_checkpoint.pt"
@@ -624,6 +643,9 @@ def train_one_exercise(exercise_id: int, cfg: TrainingConfig) -> dict[str, float
 
     summary = {
         "exercise_id":         exercise_id,
+        "split_mode":          cfg.split_mode,
+        "fold_name":           fold_name,
+        "held_out_subject":    held_out_subject,
         "best_epoch":          best_epoch,
         "best_val_f1":         best_val_f1,
         "best_test_loss":      best_test_met.get("loss", 0.0),
@@ -670,6 +692,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--patience",         type=int,   default=10)
     parser.add_argument("--num-workers",      type=int,   default=0)
     parser.add_argument("--device",           type=str,   default="auto")
+    parser.add_argument("--split-mode",       type=str,   default="subject", choices=["subject", "loso"])
     parser.add_argument("--no-phase-decoder", action="store_true",
                         help="Disable FrameDecoder/PhaseAligner (pure similarity mode).")
     return parser
@@ -700,15 +723,32 @@ def main(argv: Iterable[str] | None = None) -> None:
         num_workers=args.num_workers,
         device=args.device,
         use_phase_decoder=not args.no_phase_decoder,
+        split_mode=args.split_mode,
     )
 
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
 
     summaries = []
     for exercise_id in cfg.exercise_ids:
-        summary = train_one_exercise(exercise_id, cfg)
-        summaries.append(summary)
-        print(json.dumps(summary, indent=2))
+        if cfg.split_mode == "loso":
+            exercise_loader = UIPRMDLoader(cfg.data_root)
+            exercise_records = exercise_loader.load_vicon_data(exercise_id=exercise_id)
+            split_plans = build_split_plans(
+                exercise_records,
+                cfg.split_mode,
+                cfg.train_ratio,
+                cfg.val_ratio,
+                cfg.test_ratio,
+                cfg.seed + exercise_id,
+            )
+            for split_plan in split_plans:
+                summary = train_one_exercise(exercise_id, cfg, records=exercise_records, split_plan=split_plan)
+                summaries.append(summary)
+                print(json.dumps(summary, indent=2))
+        else:
+            summary = train_one_exercise(exercise_id, cfg)
+            summaries.append(summary)
+            print(json.dumps(summary, indent=2))
 
     (cfg.output_dir / "all_exercises_summary.json").write_text(
         json.dumps(summaries, indent=2), encoding="utf-8"
