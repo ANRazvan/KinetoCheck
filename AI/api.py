@@ -55,7 +55,7 @@ async def analyze_video(video: UploadFile = File(...), exercise_id: str = Form("
 
     # Import local processing function
     try:
-        from phase_aware.video_checkpoint_inference_phase_aware import (
+        from inference.video_checkpoint_inference import (
             process_video,
             get_cached_models,
         )
@@ -65,7 +65,7 @@ async def analyze_video(video: UploadFile = File(...), exercise_id: str = Form("
 
     # Minimal runtime setup mirroring app.get runtime
     try:
-        from phase_aware.video_checkpoint_inference_phase_aware import ensure_pose_task_model, resolve_device
+        from inference.video_checkpoint_inference import ensure_pose_task_model, resolve_device
         device = resolve_device("auto")
         checkpoints_root = BASE_DIR / "checkpoints" / "uiprmd_phase_aware_rom"
         all_models = get_cached_models(checkpoints_root, device)

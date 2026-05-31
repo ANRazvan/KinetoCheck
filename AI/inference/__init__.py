@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from phase_aware.video_checkpoint_inference_phase_aware import (
+from .video_checkpoint_inference import (
     LoadedExerciseModel,
     build_model_input,
     ensure_pose_task_model,
     extract_mediapipe_sequence,
+    get_cached_models,
     load_models,
     main,
     parse_args,
@@ -18,6 +19,7 @@ __all__ = [
     "build_model_input",
     "ensure_pose_task_model",
     "extract_mediapipe_sequence",
+    "get_cached_models",
     "load_models",
     "main",
     "parse_args",

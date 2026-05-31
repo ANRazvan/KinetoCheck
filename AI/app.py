@@ -25,7 +25,7 @@ def allowed_file(filename: str) -> bool:
 
 @lru_cache(maxsize=1)
 def get_runtime() -> tuple[list, UIPRMDPreprocessor, tuple[object, Path]]:
-    from phase_aware.video_checkpoint_inference_phase_aware import ensure_pose_task_model, load_models, resolve_device
+    from inference.video_checkpoint_inference import ensure_pose_task_model, load_models, resolve_device
 
     device = resolve_device("auto")
     models = load_models(CHECKPOINTS_ROOT, device)
@@ -130,7 +130,7 @@ def upload_video() -> str:
     uploaded.save(input_path)
 
     # 4. Process Video
-    from phase_aware.video_checkpoint_inference_phase_aware import process_video
+    from inference.video_checkpoint_inference import process_video
     
     report = process_video(
         video_path=input_path,

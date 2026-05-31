@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Iterable
 
 from Preprocessing.UIPRMDPreprocessor import UIPRMDPreprocessor
-from Testing.video_checkpoint_inference import (
+from inference.video_checkpoint_inference import (
     LoadedExerciseModel,
     ensure_pose_task_model,
     load_models,
