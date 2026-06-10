@@ -1,6 +1,5 @@
 # KinetoCheck
 
-![License](https://img.shields.io/badge/License-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
 ![.NET](https://img.shields.io/badge/.NET-8.0-purple)
 ![PyTorch](https://img.shields.io/badge/PyTorch-Deep%20Learning-ee4c2c)
