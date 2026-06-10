@@ -1,0 +1,183 @@
+@model App.ViewModels.StatisticsPageViewModel
+@{
+    ViewData["Title"] = "Statistics";
+}
+
+<div class="panel-card p-4">
+    <div class="panel-header border-bottom pb-3 mb-0">
+        <div>
+            <p class="panel-kicker">Analytics</p>
+            <h2>Performance Trends</h2>
+        </div>
+        <div>
+            <a class="btn btn-outline-secondary btn-sm" asp-action="Index">Back to Dashboard</a>
+        </div>
+    </div>
+
+    <div class="stats-grid">
+        
+        <div class="chart-card half-width d-flex flex-column align-items-center">
+            <h3 class="h6 text-muted mb-3 w-100">Overall Accuracy</h3>
+            <div style="position: relative; height: 220px; width: 100%;">
+                <canvas id="overallChart"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-card half-width">
+            <h3 class="h6 text-muted mb-3">Analyses by Exercise</h3>
+            <div style="position: relative; height: 220px; width: 100%;">
+                <canvas id="exerciseChart"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-card full-width">
+            <h3 class="h6 text-muted mb-3">Scores Timeline (Recent)</h3>
+            <div style="position: relative; height: 250px; width: 100%;">
+                <canvas id="scoresChart"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-card half-width">
+            <h3 class="h6 text-muted mb-3">Pass/Fail Breakdown</h3>
+            <div style="position: relative; height: 250px; width: 100%;">
+                <canvas id="exerciseCorrectChart"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-card half-width">
+            <h3 class="h6 text-muted mb-3">Most Frequent Problem Joints</h3>
+            <div style="position: relative; height: 250px; width: 100%;">
+                <canvas id="worstJointsChart"></canvas>
+            </div>
+            @if (Model.WorstJoints.Any())
+            {
+                <div class="mt-3">
+                    <div class="small text-muted mb-2">Top joints by flag count</div>
+                    <div class="table-responsive">
+                        <table class="table table-sm mb-0 align-middle">
+                            <thead>
+                                <tr>
+                                    <th>Joint</th>
+                                    <th class="text-end">Flags</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var joint in Model.WorstJoints.Take(10))
+                                {
+                                    <tr>
+                                        <td>@joint.JointName.Replace("_", " ")</td>
+                                        <td class="text-end fw-semibold">@joint.Count</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script>
+        (function(){
+            // Global Chart defaults for a cleaner look
+            Chart.defaults.font.family = '"Segoe UI", "Trebuchet MS", sans-serif';
+            Chart.defaults.color = '#627081';
+            Chart.defaults.scale.grid.color = 'rgba(23, 33, 43, 0.05)';
+            const commonOptions = { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } };
+
+            const aggregates = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.ExerciseAggregates));
+            const labels = aggregates.map(a => a.ExerciseName);
+
+            // 1. Overall Accuracy (Changed to Doughnut)
+            const totalCorrect = @Model.TotalCorrect;
+            const totalIncorrect = @Model.TotalIncorrect;
+            new Chart(document.getElementById('overallChart').getContext('2d'), {
+                type: 'doughnut',
+                data: {
+                    labels: ['Correct', 'Incorrect'],
+                    datasets: [{
+                        data: [totalCorrect, totalIncorrect],
+                        backgroundColor: ['#2ca02c', '#d62728'],
+                        borderWidth: 0,
+                        hoverOffset: 4
+                    }]
+                },
+                options: { ...commonOptions, cutout: '65%' }
+            });
+
+            // 2. Analyses per exercise
+            new Chart(document.getElementById('exerciseChart').getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{ 
+                        label: 'Uploads', 
+                        data: aggregates.map(a => a.AnalysisCount), 
+                        backgroundColor: '#124e78',
+                        borderRadius: 4
+                    }]
+                },
+                options: commonOptions
+            });
+
+            // 3. Scores Timeline (Curved Line)
+            const recent = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.RecentScores.Reverse().ToList()));
+            new Chart(document.getElementById('scoresChart').getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: recent.map(r => r.Label),
+                    datasets: [{ 
+                        label: 'Score', 
+                        data: recent.map(r => r.Score), 
+                        borderColor: '#f28f3b', 
+                        backgroundColor: 'rgba(242,143,59,0.15)', 
+                        fill: true,
+                        tension: 0.4, // Makes the line curvy
+                        pointBackgroundColor: '#f28f3b'
+                    }]
+                },
+                options: commonOptions
+            });
+
+            // 4. Correct vs Incorrect
+            new Chart(document.getElementById('exerciseCorrectChart').getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: 'Correct', data: aggregates.map(a => a.CorrectCount || 0), backgroundColor: '#2ca02c', borderRadius: 4 },
+                        { label: 'Incorrect', data: aggregates.map(a => a.IncorrectCount || 0), backgroundColor: '#d62728', borderRadius: 4 }
+                    ]
+                },
+                options: { ...commonOptions, scales: { x: { stacked: true }, y: { stacked: true } } }
+            });
+
+            // 5. Worst Joints
+            const worstJoints = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.WorstJoints));
+            new Chart(document.getElementById('worstJointsChart').getContext('2d'), {
+                type: 'bar',
+                indexAxis: 'y',
+                data: {
+                    labels: worstJoints.map(j => j.JointName.replace('_', ' ')),
+                    datasets: [{ 
+                        label: 'Flags', 
+                        data: worstJoints.map(j => j.Count), 
+                        backgroundColor: '#6a5acd',
+                        minBarLength: 6,
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    ...commonOptions,
+                    scales: {
+                        x: { beginAtZero: true },
+                        y: { ticks: { autoSkip: false } }
+                    }
+                }
+            });
+        })();
+    </script>
+}

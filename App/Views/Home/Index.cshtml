@@ -1,0 +1,310 @@
+﻿@model HomeIndexViewModel
+@{
+    ViewData["Title"] = "Dashboard";
+}
+
+<div class="dashboard-shell">
+    <section class="hero-panel">
+        <div class="hero-copy">
+            <span class="eyebrow">KinetoCheck</span>
+            <h1>Upload, track progress, and review performance over time.</h1>
+            <p>Analyze a rehab video, keep only the metadata in MySQL, and show your score history in a clean timeline.</p>
+        </div>
+        <div class="hero-metrics">
+            <div>
+                <strong>@Model.TotalAnalyses</strong>
+                <span>Analyses</span>
+            </div>
+            <div>
+                <strong>@(Model.AverageScore.HasValue ? Model.AverageScore.Value.ToString("F3") : "--")</strong>
+                <span>Average score</span>
+            </div>
+            <div>
+                <strong>@(Model.BestScore.HasValue ? Model.BestScore.Value.ToString("F3") : "--")</strong>
+                <span>Best score</span>
+            </div>
+        </div>
+    </section>
+
+    @if (!string.IsNullOrEmpty(ViewBag.ErrorMessage))
+    {
+        <div class="alert alert-danger alert-dismissible fade show shadow-sm rounded-4 mb-4 d-flex align-items-center" role="alert" style="border: 1px solid #f5c2c7; background-color: #f8d7da; color: #842029;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" fill="currentColor" class="bi bi-exclamation-octagon-fill flex-shrink-0 me-3" viewBox="0 0 16 16">
+                <path d="M11.46.146A.5.5 0 0 0 11.107 0H4.893a.5.5 0 0 0-.353.146L.146 4.54A.5.5 0 0 0 0 4.893v6.214a.5.5 0 0 0 .146.353l4.394 4.394a.5.5 0 0 0 .353.146h6.214a.5.5 0 0 0 .353-.146l4.394-4.394a.5.5 0 0 0 .146-.353V4.893a.5.5 0 0 0-.146-.353L11.46.146zM8 4c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 4.995A.905.905 0 0 1 8 4zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/>
+            </svg>
+            <div>
+                <h5 class="alert-heading mb-1 fw-bold fs-6">Analysis Failed</h5>
+                <p class="mb-0">@ViewBag.ErrorMessage</p>
+            </div>
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+    }
+
+    <section class="grid-layout">
+        <div class="panel-card upload-card">
+            <div class="panel-header">
+                <div>
+                    <p class="panel-kicker">New analysis</p>
+                    <h2>Upload a video</h2>
+                </div>
+            </div>
+
+            <form asp-controller="Home" asp-action="UploadVideo" method="post" enctype="multipart/form-data" class="upload-form" id="uploadForm">
+                <div class="form-group mb-3">
+                    <label for="exerciseId" class="form-label">Exercise to assess</label>
+                    <select id="exerciseId" name="exercise_id" class="form-select form-select-lg" required>
+                        @foreach (var exercise in Model.AvailableExercises)
+                        {
+                            <option value="@exercise.Id" selected="@(Model.SelectedExerciseId == exercise.Id)">@exercise.Name</option>
+                        }
+                    </select>
+                    <div class="form-text">Use auto-detect if you want the model to pick the exercise.</div>
+                </div>
+
+                    @* Sample videos for the chosen exercise *@
+                    @if ((Model.SampleCorrectVideos?.Count ?? 0) > 0 || (Model.SampleIncorrectVideos?.Count ?? 0) > 0)
+                    {
+                        <div class="mb-3">
+                            <label class="form-label">Example videos</label>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <h6>Correct example</h6>
+                                    @if (Model.SampleCorrectVideos != null && Model.SampleCorrectVideos.Count > 0)
+                                    {
+                                        foreach (var url in Model.SampleCorrectVideos)
+                                        {
+                                                <div class="sample-card mb-2">
+                                                    <video width="220" controls preload="metadata" class="sample-thumb">
+                                                        <source src="@url" type="video/mp4" />
+                                                    </video>
+                                                </div>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <p class="text-muted">No correct samples available for this exercise.</p>
+                                    }
+                                </div>
+                                <div class="col-md-6">
+                                    <h6>Incorrect example</h6>
+                                    @if (Model.SampleIncorrectVideos != null && Model.SampleIncorrectVideos.Count > 0)
+                                    {
+                                        foreach (var url in Model.SampleIncorrectVideos)
+                                        {
+                                            <div class="sample-card mb-2">
+                                                <video width="220" controls preload="metadata" class="sample-thumb">
+                                                    <source src="@url" type="video/mp4" />
+                                                </video>
+                                            </div>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <p class="text-muted">No incorrect samples available for this exercise.</p>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    }
+
+                    <!-- sampleVideoPath removed: samples are preview-only and not submitted -->
+
+                <div class="form-group mb-3">
+                    <label for="videoFile" class="form-label">Video file</label>
+                    <input type="file" name="videoFile" id="videoFile" class="form-control form-control-lg" accept="video/*" required />
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-lg w-100" id="uploadSubmit">Upload & Analyze</button>
+            </form>
+
+            @section Scripts {
+                <script>
+                    (function(){
+                        const form = document.getElementById('uploadForm');
+                        if (!form) return;
+                        const fileInput = document.getElementById('videoFile');
+                        const submitBtn = document.getElementById('uploadSubmit');
+
+                        form.addEventListener('submit', function (e) {
+                            if (submitBtn) {
+                                submitBtn.disabled = true;
+                                submitBtn.innerText = 'Uploading...';
+                            }
+                        });
+
+                        // Thumbnail clicks load the sample into the main preview player
+                        const preview = document.getElementById('samplePreview');
+                        document.querySelectorAll('.sample-thumb').forEach(function (thumb) {
+                            thumb.addEventListener('click', function () {
+                                if (!preview) return;
+                                const srcEl = document.getElementById('samplePreviewSource');
+                                const thumbSource = this.querySelector('source');
+                                if (!thumbSource || !srcEl) return;
+                                const url = thumbSource.getAttribute('src');
+                                if (!url) return;
+                                try { preview.pause(); } catch (e) { }
+                                const cb = 'cb=' + Date.now();
+                                const sep = url.includes('?') ? '&' : '?';
+                                srcEl.setAttribute('src', url + sep + cb);
+                                preview.load();
+                                preview.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                preview.play().catch(() => { /* autoplay prevented */ });
+                            });
+                        });
+
+                        // When exercise selection changes, reload page to show samples for that exercise
+                        const exerciseSelect = document.getElementById('exerciseId');
+                        if (exerciseSelect) {
+                            exerciseSelect.addEventListener('change', function () {
+                                const val = this.value || 'auto';
+                                const url = new URL(window.location.href);
+                                url.searchParams.set('exercise_id', val);
+                                window.location.href = url.toString();
+                            });
+                        }
+                    })();
+                </script>
+            }
+        </div>
+
+        <div class="panel-card stats-card">
+            <div class="panel-header">
+                <div>
+                    <p class="panel-kicker">Movement insights</p>
+                    <h2>What the database keeps</h2>
+                </div>
+            </div>
+
+            <ul class="insight-list">
+                <li><strong>Uploads</strong> keep only the file name, user, size, and chosen exercise.</li>
+                <li><strong>Statistics</strong> store score, prediction, assessed exercise, and worst joints.</li>
+                <li><strong>History</strong> stores score deltas so you can show improvement over time.</li>
+            </ul>
+
+            <div class="trend-box">
+                <span>Recent change</span>
+                <strong>@(Model.RecentImprovement.HasValue ? Model.RecentImprovement.Value.ToString("+0.000;-0.000;0.000") : "No prior comparison yet")</strong>
+                <p>@(string.IsNullOrWhiteSpace(Model.FavoriteExercise) ? "No exercise trend yet." : $"Most frequent exercise: {Model.FavoriteExercise}")</p>
+            </div>
+        </div>
+    </section>
+
+    @if (Model.HasAnalysisResult && Model.LatestResult != null)
+    {
+        <section class="panel-card result-card">
+            <div class="panel-header">
+                <div>
+                    <p class="panel-kicker">Latest result</p>
+                    <h2>@Model.LatestResult.AssessedExercise</h2>
+                </div>
+                <span class="status-pill success">Saved to history</span>
+            </div>
+
+            <div class="result-grid">
+                <div class="result-score">
+                    <span>Score</span>
+                    <strong>@Model.LatestResult.Score.ToString("F3")</strong>
+                    <small>@Model.LatestResult.Prediction</small>
+                    <small>Threshold: @Model.LatestResult.Threshold.ToString("F3")</small>
+                    <small>Margin: @Model.LatestResult.Margin.ToString("+0.000;-0.000;0.000")</small>
+                </div>
+                <div class="result-detail">
+                    <span>Worst joints</span>
+                    <p>@Model.LatestResult.WorstJoints</p>
+                    <span>Raw threshold</span>
+                    <p>@Model.LatestResult.RawThreshold.ToString("F3")</p>
+                    <span>File</span>
+                    <p>@Model.LatestResult.OriginalFileName</p>
+                    <span>Trend</span>
+                    <p>@(Model.LatestResult.ScoreDeltaFromPrevious.HasValue ? Model.LatestResult.ScoreDeltaFromPrevious.Value.ToString("+0.000;-0.000;0.000") : "First sample for this exercise")</p>
+                </div>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(Model.LatestSummary))
+            {
+                <p class="mt-3 mb-0">@Model.LatestSummary</p>
+            }
+
+            @if (Model.LatestJointInsights.Count > 0)
+            {
+                <div class="joint-table mt-4">
+                    <h3 class="h5">Joint details</h3>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle">
+                            <thead>
+                                <tr>
+                                    <th>Rank Index</th>
+                                    <th>Joint</th>
+                                    <th>Deviation</th>
+                                    <th>Importance</th>
+                                    <th>Problem</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var joint in Model.LatestJointInsights)
+                                {
+                                    <tr>
+                                        <td>@joint.RankIndex</td>
+                                        <td>@joint.JointName</td>
+                                        <td>@joint.Deviation.ToString("F3")</td>
+                                        <td>@joint.Importance.ToString("F3")</td>
+                                        <td>@joint.ProblemScore.ToString("F3")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(Model.AnnotatedVideoUrl))
+            {
+                <div class="video-shell mt-4">
+                    <video controls>
+                        <source src="@Model.AnnotatedVideoUrl" type="video/mp4" />
+                    </video>
+                    <a class="btn btn-outline-secondary mt-3" href="@Model.AnnotatedVideoUrl" download>Download annotated video</a>
+                </div>
+            }
+        </section>
+    }
+
+    <section class="panel-card history-card">
+        <div class="panel-header">
+            <div>
+                <p class="panel-kicker">Personal history</p>
+                <h2>Recent uploads</h2>
+            </div>
+        </div>
+
+        @if (Model.RecentUploads.Count == 0)
+        {
+            <div class="empty-state">
+                <p>No saved analyses yet. Upload the first video to start your timeline.</p>
+            </div>
+        }
+        else
+        {
+            <div class="history-list">
+                @foreach (var item in Model.RecentUploads)
+                {
+                    <article class="history-item">
+                        <div>
+                            <strong>@item.ExerciseName</strong>
+                            <p>@item.FileName</p>
+                            <small>@item.RecordedAtUtc.ToLocalTime().ToString("MMM dd, yyyy - h:mm tt")</small>
+                        </div>
+                        <div class="history-score">
+                            <strong>@item.Score.ToString("F3")</strong>
+                            <span>@item.Prediction</span>
+                        </div>
+                        <div class="history-meta">
+                            <span>@item.Summary</span>
+                            <small>@(item.ScoreDeltaFromPrevious.HasValue ? item.ScoreDeltaFromPrevious.Value.ToString("+0.000;-0.000;0.000") : "No prior comparison")</small>
+                        </div>
+                    </article>
+                }
+            </div>
+        }
+    </section>
+</div>

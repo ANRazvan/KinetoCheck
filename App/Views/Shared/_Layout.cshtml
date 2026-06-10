@@ -1,0 +1,89 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@ViewData["Title"] - App</title>
+    <script type="importmap"></script>
+    <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/App.styles.css" asp-append-version="true" />
+</head>
+<body>
+    <header>
+        <nav class="navbar navbar-expand-sm navbar-dark kinetocheck-navbar box-shadow mb-4 py-3" style="background-color: #1a1e23;">
+            <div class="container">
+                
+                <a class="navbar-brand fw-bold fs-4 d-flex align-items-center gap-2" asp-area="" asp-controller="Home" asp-action="Index">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" fill="#0d6efd" class="bi bi-activity" viewBox="0 0 16 16">
+                        <path fill-rule="evenodd" d="M6 2a.5.5 0 0 1 .47.33L10 12.036l1.53-4.208A.5.5 0 0 1 12 7.5h3.5a.5.5 0 0 1 0 1h-3.15l-1.88 5.17a.5.5 0 0 1-.94 0L6 3.964 4.47 8.171A.5.5 0 0 1 4 8.5H.5a.5.5 0 0 1 0-1h3.15l1.88-5.17A.5.5 0 0 1 6 2Z"/>
+                    </svg>
+                    KinetoCheck
+                </a>
+
+                <button class="navbar-toggler border-0" type="button" data-bs-toggle="collapse" data-bs-target=".navbar-collapse" aria-controls="navbarSupportedContent"
+                        aria-expanded="false" aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+
+                <div class="navbar-collapse collapse d-sm-inline-flex justify-content-between">
+                    
+                    <ul class="navbar-nav flex-grow-1 ms-md-4 gap-2">
+                        <li class="nav-item">
+                            <a class="nav-link px-3 rounded" asp-area="" asp-controller="Home" asp-action="Index">Dashboard</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link px-3 rounded" asp-area="" asp-controller="Home" asp-action="Statistics">Statistics</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link px-3 rounded" asp-area="" asp-controller="Home" asp-action="Privacy">Privacy</a>
+                        </li>
+                    </ul>
+
+                    <div class="navbar-auth d-flex align-items-center gap-3 mt-3 mt-sm-0">
+                        @if (User?.Identity?.IsAuthenticated == true)
+                        {
+                            <div class="d-flex align-items-center gap-3 bg-dark bg-opacity-25 px-4 py-2 rounded-pill border border-secondary border-opacity-25">
+                                <span class="navbar-user fw-medium text-white d-flex align-items-center gap-2">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-person-circle text-secondary" viewBox="0 0 16 16">
+                                        <path d="M11 6a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"/>
+                                        <path fill-rule="evenodd" d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8zm8-7a7 7 0 0 0-5.468 11.37C3.242 11.226 4.805 10 8 10s4.757 1.225 5.468 2.37A7 7 0 0 0 8 1z"/>
+                                    </svg>
+                                    @((User.Identity?.Name) ?? "User")
+                                </span>
+                                <div class="vr bg-white opacity-25" style="height: 20px;"></div>
+                                <form asp-controller="Account" asp-action="Logout" method="post" class="d-inline m-0">
+                                    @Html.AntiForgeryToken()
+                                    <button type="submit" class="btn btn-sm btn-link text-decoration-none text-light p-0 border-0 fw-medium">Logout</button>
+                                </form>
+                            </div>
+                        }
+                        else
+                        {
+                            <span class="navbar-user badge rounded-pill text-bg-warning px-3 py-2 fw-medium">Guest</span>
+                            <a class="btn btn-sm btn-outline-light rounded-pill px-4 py-2 fw-medium" asp-controller="Account" asp-action="Login">Login</a>
+                            <a class="btn btn-sm btn-primary rounded-pill px-4 py-2 fw-medium shadow-sm" asp-controller="Account" asp-action="Register">Register</a>
+                        }
+                    </div>
+
+                </div>
+            </div>
+        </nav>
+    </header>
+    <div class="container app-shell">
+        <main role="main" class="pb-3">
+            @RenderBody()
+        </main>
+    </div>
+
+    <footer class="border-top footer text-muted">
+        <div class="container">
+            &copy; 2026 - KinetoCheck - <a asp-area="" asp-controller="Home" asp-action="Privacy">Privacy</a>
+        </div>
+    </footer>
+    <script src="~/lib/jquery/dist/jquery.min.js"></script>
+    <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="~/js/site.js" asp-append-version="true"></script>
+    @await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>
