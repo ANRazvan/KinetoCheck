@@ -49,6 +49,31 @@
             <div style="position: relative; height: 250px; width: 100%;">
                 <canvas id="worstJointsChart"></canvas>
             </div>
+            @if (Model.WorstJoints.Any())
+            {
+                <div class="mt-3">
+                    <div class="small text-muted mb-2">Top joints by flag count</div>
+                    <div class="table-responsive">
+                        <table class="table table-sm mb-0 align-middle">
+                            <thead>
+                                <tr>
+                                    <th>Joint</th>
+                                    <th class="text-end">Flags</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var joint in Model.WorstJoints.Take(10))
+                                {
+                                    <tr>
+                                        <td>@joint.JointName.Replace("_", " ")</td>
+                                        <td class="text-end fw-semibold">@joint.Count</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            }
         </div>
     </div>
 </div>
@@ -134,16 +159,24 @@
             const worstJoints = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.WorstJoints));
             new Chart(document.getElementById('worstJointsChart').getContext('2d'), {
                 type: 'bar',
+                indexAxis: 'y',
                 data: {
                     labels: worstJoints.map(j => j.JointName.replace('_', ' ')),
                     datasets: [{ 
                         label: 'Flags', 
                         data: worstJoints.map(j => j.Count), 
                         backgroundColor: '#6a5acd',
+                        minBarLength: 6,
                         borderRadius: 4
                     }]
                 },
-                options: { ...commonOptions, indexAxis: 'y' } // Horizontal bar chart is better for long names
+                options: {
+                    ...commonOptions,
+                    scales: {
+                        x: { beginAtZero: true },
+                        y: { ticks: { autoSkip: false } }
+                    }
+                }
             });
         })();
     </script>

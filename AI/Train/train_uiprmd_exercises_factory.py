@@ -174,61 +174,6 @@ def collate_batch(batch: list[dict]) -> dict:
     }
 
 
-def classification_metrics(scores: torch.Tensor, targets: torch.Tensor, threshold: float) -> dict[str, float]:
-    predictions = (scores >= threshold).float()
-    targets = targets.float()
-    tp = float(((predictions == 1) & (targets == 1)).sum().item())
-    tn = float(((predictions == 0) & (targets == 0)).sum().item())
-    fp = float(((predictions == 1) & (targets == 0)).sum().item())
-    fn = float(((predictions == 0) & (targets == 1)).sum().item())
-    accuracy = (tp + tn) / max(1.0, tp + tn + fp + fn)
-    precision = tp / max(1.0, tp + fp)
-    recall = tp / max(1.0, tp + fn)
-    f1 = 2.0 * precision * recall / max(1e-8, precision + recall)
-    return {"accuracy": accuracy, "precision": precision, "recall": recall, "f1": f1}
-
-
-def search_best_threshold(scores: torch.Tensor, targets: torch.Tensor) -> tuple[float, dict[str, float]]:
-    if scores.numel() == 0:
-        return 0.5, {"accuracy": 0.0, "precision": 0.0, "recall": 0.0, "f1": 0.0}
-    min_score = float(scores.min().item())
-    max_score = float(scores.max().item())
-    if math.isclose(min_score, max_score):
-        return min_score, classification_metrics(scores, targets, min_score)
-    best_threshold, best_metrics = min_score, {"accuracy": 0.0, "precision": 0.0, "recall": 0.0, "f1": 0.0}
-    for threshold in torch.linspace(min_score, max_score, steps=101):
-        metrics = classification_metrics(scores, targets, float(threshold.item()))
-        if metrics["f1"] > best_metrics["f1"]:
-            best_threshold, best_metrics = float(threshold.item()), metrics
-    return best_threshold, best_metrics
-
-
-def evaluate(model: ExerciseEvaluator, loader: DataLoader, criterion: ContrastiveLoss, device: torch.device) -> dict[str, float | torch.Tensor]:
-    model.eval()
-    losses, scores, targets = [], [], []
-    with torch.no_grad():
-        for batch in loader:
-            template = batch["template"].to(device)
-            user = batch["user"].to(device)
-            target = batch["target"].to(device)
-            outputs = model(template, user)
-            loss = criterion(outputs["template_embedding"], outputs["user_embedding"], target)
-            losses.append(float(loss.item()))
-            scores.append(outputs["similarity_score"].detach().cpu())
-            targets.append(target.detach().cpu())
-
-    scores_tensor = torch.cat(scores, dim=0) if scores else torch.empty(0)
-    targets_tensor = torch.cat(targets, dim=0) if targets else torch.empty(0)
-    threshold, metrics = search_best_threshold(scores_tensor, targets_tensor)
-    return {
-        "loss": float(np.mean(losses)) if losses else 0.0,
-        "threshold": threshold,
-        "scores": scores_tensor,
-        "targets": targets_tensor,
-        **metrics,
-    }
-
-
 def train_one_exercise(
     exercise_id: int,
     cfg: TrainingConfig,
@@ -237,6 +182,7 @@ def train_one_exercise(
     split_plan: SplitPlan | None = None,
 ) -> dict[str, float]:
     set_seed(cfg.seed + exercise_id)
+
     loader = UIPRMDLoader(cfg.data_root)
     preprocessor = UIPRMDPreprocessor()
     if records is None:
@@ -276,112 +222,35 @@ def train_one_exercise(
     criterion = LossFactory().create_contrastive(margin=cfg.margin)
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate, weight_decay=cfg.weight_decay)
 
-    exercise_dir = cfg.output_dir / f"exercise_{exercise_id + 1:02d}" / fold_name
-    exercise_dir.mkdir(parents=True, exist_ok=True)
-    metrics_path = exercise_dir / "metrics.csv"
-    best_checkpoint_path = exercise_dir / "best_checkpoint.pt"
-    last_checkpoint_path = exercise_dir / "last_checkpoint.pt"
-    history_path = exercise_dir / "history.json"
+    # Use the shared Trainer for the epoch loop, evaluation and checkpointing
+    from Train.trainer import Trainer
 
-    history: list[dict[str, float | int]] = []
-    best_val_f1, best_epoch = -1.0, -1
-    best_test_metrics: dict[str, float] = {}
-    patience_counter = 0
+    trainer = Trainer(cfg)
+    summary = trainer.train(
+        exercise_id=exercise_id,
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        test_loader=test_loader,
+        criterion=criterion,
+        optimizer=optimizer,
+        device=device,
+        output_dir=cfg.output_dir,
+        template_tensor=template_tensor,
+        template_xyz_tensor=None,
+        delta_criterion=None,
+        delta_weight=getattr(cfg, "delta_weight", 0.1),
+        rom_criterion=None,
+        fold_name=fold_name,
+        held_out_subject=held_out_subject,
+        feature_method=getattr(cfg, "feature_method", None),
+        in_channels=extractor.in_channels,
+        hidden_channels=cfg.hidden_channels,
+        embedding_dim=cfg.embedding_dim,
+        use_phase_decoder=False,
+        feature_channels=None,
+    )
 
-    for epoch in range(1, cfg.epochs + 1):
-        model.train()
-        train_losses = []
-        for batch in train_loader:
-            template = batch["template"].to(device)
-            user = batch["user"].to(device)
-            target = batch["target"].to(device)
-
-            optimizer.zero_grad(set_to_none=True)
-            outputs = model(template, user)
-            loss = criterion(outputs["template_embedding"], outputs["user_embedding"], target)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
-            optimizer.step()
-            train_losses.append(float(loss.item()))
-
-        train_loss = float(np.mean(train_losses)) if train_losses else 0.0
-        val_metrics = evaluate(model, val_loader, criterion, device)
-        test_metrics = evaluate(model, test_loader, criterion, device)
-
-        epoch_metrics = {
-            "exercise_id": exercise_id,
-            "split_mode": cfg.split_mode,
-            "fold_name": fold_name,
-            "held_out_subject": held_out_subject,
-            "epoch": epoch,
-            "feature_method": extractor.name,
-            "in_channels": extractor.in_channels,
-            "train_loss": train_loss,
-            "val_loss": float(val_metrics["loss"]),
-            "val_threshold": float(val_metrics["threshold"]),
-            "val_accuracy": float(val_metrics["accuracy"]),
-            "val_precision": float(val_metrics["precision"]),
-            "val_recall": float(val_metrics["recall"]),
-            "val_f1": float(val_metrics["f1"]),
-            "test_loss": float(test_metrics["loss"]),
-            "test_accuracy": float(test_metrics["accuracy"]),
-            "test_precision": float(test_metrics["precision"]),
-            "test_recall": float(test_metrics["recall"]),
-            "test_f1": float(test_metrics["f1"]),
-        }
-        history.append(epoch_metrics)
-
-        checkpoint = {
-            "exercise_id": exercise_id,
-            "epoch": epoch,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "template_tensor": template_tensor,
-            "config": {**asdict(cfg), "feature_method": extractor.name, "in_channels": extractor.in_channels, "fold_name": fold_name, "held_out_subject": held_out_subject},
-            "metrics": epoch_metrics,
-            "val_threshold": float(val_metrics["threshold"]),
-        }
-        torch.save(checkpoint, last_checkpoint_path)
-
-        with metrics_path.open("w", newline="", encoding="utf-8") as csv_file:
-            writer = csv.DictWriter(csv_file, fieldnames=list(epoch_metrics.keys()))
-            writer.writeheader()
-            writer.writerows(history)
-        history_path.write_text(json.dumps(history, indent=2), encoding="utf-8")
-
-        if float(val_metrics["f1"]) > best_val_f1:
-            best_val_f1 = float(val_metrics["f1"])
-            best_epoch = epoch
-            best_test_metrics = {
-                "loss": float(test_metrics["loss"]),
-                "accuracy": float(test_metrics["accuracy"]),
-                "precision": float(test_metrics["precision"]),
-                "recall": float(test_metrics["recall"]),
-                "f1": float(test_metrics["f1"]),
-                "threshold": float(val_metrics["threshold"]),
-            }
-            torch.save(checkpoint, best_checkpoint_path)
-            patience_counter = 0
-        else:
-            patience_counter += 1
-
-        if cfg.patience > 0 and patience_counter >= cfg.patience:
-            break
-
-    summary = {
-        "exercise_id": exercise_id,
-        "feature_method": extractor.name,
-        "in_channels": extractor.in_channels,
-        "best_epoch": best_epoch,
-        "best_val_f1": best_val_f1,
-        "best_test_loss": best_test_metrics.get("loss", 0.0),
-        "best_test_accuracy": best_test_metrics.get("accuracy", 0.0),
-        "best_test_precision": best_test_metrics.get("precision", 0.0),
-        "best_test_recall": best_test_metrics.get("recall", 0.0),
-        "best_test_f1": best_test_metrics.get("f1", 0.0),
-        "best_threshold": best_test_metrics.get("threshold", 0.5),
-    }
-    (exercise_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return summary
 
 

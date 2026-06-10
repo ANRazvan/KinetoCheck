@@ -347,102 +347,6 @@ def collate_batch(batch: list[dict]) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Evaluation
-# ---------------------------------------------------------------------------
-
-def search_best_threshold(
-    scores: torch.Tensor, targets: torch.Tensor
-) -> tuple[float, dict[str, float]]:
-    if scores.numel() == 0:
-        return 0.5, {"accuracy": 0.0, "precision": 0.0, "recall": 0.0, "f1": 0.0}
-
-    lo = float(scores.min().item())
-    hi = float(scores.max().item())
-
-    if math.isclose(lo, hi):
-        return lo, classification_metrics(scores, targets, lo)
-
-    best_thr, best_met = lo, {"accuracy": 0.0, "precision": 0.0, "recall": 0.0, "f1": 0.0}
-    for thr in torch.linspace(lo, hi, steps=101):
-        met = classification_metrics(scores, targets, float(thr.item()))
-        if met["f1"] > best_met["f1"]:
-            best_met, best_thr = met, float(thr.item())
-
-    return best_thr, best_met
-
-
-def classification_metrics(
-    scores: torch.Tensor, targets: torch.Tensor, threshold: float
-) -> dict[str, float]:
-    preds   = (scores >= threshold).float()
-    targets = targets.float()
-
-    tp = float(((preds == 1) & (targets == 1)).sum())
-    tn = float(((preds == 0) & (targets == 0)).sum())
-    fp = float(((preds == 1) & (targets == 0)).sum())
-    fn = float(((preds == 0) & (targets == 1)).sum())
-
-    accuracy  = (tp + tn) / max(1.0, tp + tn + fp + fn)
-    precision = tp / max(1.0, tp + fp)
-    recall    = tp / max(1.0, tp + fn)
-    f1        = 2.0 * precision * recall / max(1e-8, precision + recall)
-
-    return {"accuracy": accuracy, "precision": precision, "recall": recall, "f1": f1}
-
-
-def evaluate(
-    model: ExerciseEvaluator,
-    loader: DataLoader,
-    criterion: ContrastiveLoss,
-    delta_criterion: DeltaRegressionLoss | None,
-    device: torch.device,
-    delta_weight: float = 0.1,
-    rom_criterion=None,
-) -> dict[str, float | torch.Tensor]:
-    model.eval()
-    losses, scores, targets = [], [], []
-
-    with torch.no_grad():
-        for batch in loader:
-            template = batch["template"].to(device)
-            user     = batch["user"].to(device)
-            target   = batch["target"].to(device)
-
-            outputs = model(template, user)
-            loss = criterion(
-                outputs["template_embedding"], outputs["user_embedding"], target
-            )
-
-            if delta_criterion is not None and "correction_delta" in outputs:
-                d_loss = delta_criterion(
-                    outputs["correction_delta"],
-                    outputs["warped_template_xyz"],
-                    user,
-                    target,
-                )
-                loss = loss + delta_weight * d_loss
-
-            if rom_criterion is not None:
-                loss = loss + rom_criterion(user, template, target)
-
-            losses.append(float(loss.item()))
-            scores.append(outputs["similarity_score"].detach().cpu())
-            targets.append(target.detach().cpu())
-
-    scores_t  = torch.cat(scores,  dim=0) if scores  else torch.empty(0)
-    targets_t = torch.cat(targets, dim=0) if targets else torch.empty(0)
-    threshold, metrics = search_best_threshold(scores_t, targets_t)
-
-    return {
-        "loss":      float(np.mean(losses)) if losses else 0.0,
-        "threshold": threshold,
-        "scores":    scores_t,
-        "targets":   targets_t,
-        **metrics,
-    }
-
-
-# ---------------------------------------------------------------------------
 # Per-exercise training
 # ---------------------------------------------------------------------------
 
@@ -521,125 +425,37 @@ def train_one_exercise(
         model.parameters(), lr=cfg.learning_rate, weight_decay=cfg.weight_decay
     )
 
-    exercise_dir         = cfg.output_dir / f"exercise_{exercise_id + 1:02d}" / fold_name
-    exercise_dir.mkdir(parents=True, exist_ok=True)
-    metrics_path         = exercise_dir / "metrics.csv"
-    best_checkpoint_path = exercise_dir / "best_checkpoint.pt"
-    last_checkpoint_path = exercise_dir / "last_checkpoint.pt"
-    history_path         = exercise_dir / "history.json"
 
-    history: list[dict] = []
-    best_val_f1   = -1.0
-    best_epoch    = -1
-    best_test_met: dict[str, float] = {}
-    patience_ctr  = 0
+    # Delegate training loop to the shared Trainer implementation
+    from Train.trainer import Trainer
 
-    for epoch in range(1, cfg.epochs + 1):
-        model.train()
-        train_losses: list[float] = []
+    trainer = Trainer(cfg)
+    summary = trainer.train(
+        exercise_id=exercise_id,
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        test_loader=test_loader,
+        criterion=criterion,
+        optimizer=optimizer,
+        device=device,
+        output_dir=cfg.output_dir,
+        template_tensor=template_tensor,
+        template_xyz_tensor=template_xyz_tensor,
+        delta_criterion=delta_criterion,
+        delta_weight=cfg.delta_weight,
+        rom_criterion=rom_criterion,
+        fold_name=fold_name,
+        held_out_subject=held_out_subject,
+        feature_method=getattr(cfg, "feature_method", None),
+        in_channels=12,
+        hidden_channels=cfg.hidden_channels,
+        embedding_dim=cfg.embedding_dim,
+        use_phase_decoder=cfg.use_phase_decoder,
+        feature_channels=["x","y","z","vx","vy","vz","ax","ay","az","angle","angular_vel","bone_ratio"],
+    )
 
-        for batch in train_loader:
-            template = batch["template"].to(device)
-            user     = batch["user"].to(device)
-            target   = batch["target"].to(device)
-
-            optimizer.zero_grad(set_to_none=True)
-            outputs = model(template, user)
-
-            loss = criterion(
-                outputs["template_embedding"], outputs["user_embedding"], target
-            )
-            if delta_criterion is not None and "correction_delta" in outputs:
-                d_loss = delta_criterion(
-                    outputs["correction_delta"],
-                    outputs["warped_template_xyz"],
-                    user,
-                    target,
-                )
-                loss = loss + cfg.delta_weight * d_loss
-
-            loss = loss + rom_criterion(user, template, target)
-
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
-            optimizer.step()
-            train_losses.append(float(loss.item()))
-
-        train_loss   = float(np.mean(train_losses)) if train_losses else 0.0
-        val_metrics  = evaluate(model, val_loader,  criterion, delta_criterion, device, cfg.delta_weight, rom_criterion)
-        test_metrics = evaluate(model, test_loader, criterion, delta_criterion, device, cfg.delta_weight, rom_criterion)
-
-        epoch_metrics = {
-            "exercise_id":   exercise_id,
-            "epoch":         epoch,
-            "train_loss":    train_loss,
-            "val_loss":      float(val_metrics["loss"]),
-            "val_threshold": float(val_metrics["threshold"]),
-            "val_accuracy":  float(val_metrics["accuracy"]),
-            "val_precision": float(val_metrics["precision"]),
-            "val_recall":    float(val_metrics["recall"]),
-            "val_f1":        float(val_metrics["f1"]),
-            "test_loss":     float(test_metrics["loss"]),
-            "test_accuracy": float(test_metrics["accuracy"]),
-            "test_precision":float(test_metrics["precision"]),
-            "test_recall":   float(test_metrics["recall"]),
-            "test_f1":       float(test_metrics["f1"]),
-        }
-        history.append(epoch_metrics)
-
-        checkpoint = {
-            # ---- existing fields (unchanged) ----
-            "exercise_id":          exercise_id,
-            "epoch":                epoch,
-            "model_state_dict":     model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "template_tensor":      template_tensor,
-            "config":               asdict(cfg),
-            "metrics":              epoch_metrics,
-            "val_threshold":        float(val_metrics["threshold"]),
-            # ---- overlay / inference fields ----
-            "template_xyz_tensor":  template_xyz_tensor,  # (3, T, J) raw XY for overlay
-            "in_channels":          12,
-            "hidden_channels":      list(cfg.hidden_channels),
-            "embedding_dim":        cfg.embedding_dim,
-            "use_phase_decoder":    cfg.use_phase_decoder,
-            "feature_channels":     ["x","y","z","vx","vy","vz","ax","ay","az","angle","angular_vel","bone_ratio"],
-            "preprocessor_config":  {
-                "align_method":        "vicon_to_mediapipe",
-                "num_joints":          17,
-                # True  → template_xyz_tensor is raw image-fraction XY (good overlay)
-                # False → body-centred metric coords (approximate overlay)
-                "template_xyz_is_raw": True,
-            },
-        }
-
-        torch.save(checkpoint, last_checkpoint_path)
-
-        with metrics_path.open("w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=list(epoch_metrics.keys()))
-            writer.writeheader()
-            writer.writerows(history)
-
-        history_path.write_text(json.dumps(history, indent=2), encoding="utf-8")
-
-        if float(val_metrics["f1"]) > best_val_f1:
-            best_val_f1  = float(val_metrics["f1"])
-            best_epoch   = epoch
-            best_test_met = {
-                "loss":      float(test_metrics["loss"]),
-                "accuracy":  float(test_metrics["accuracy"]),
-                "precision": float(test_metrics["precision"]),
-                "recall":    float(test_metrics["recall"]),
-                "f1":        float(test_metrics["f1"]),
-                "threshold": float(val_metrics["threshold"]),
-            }
-            torch.save(checkpoint, best_checkpoint_path)
-            patience_ctr = 0
-        else:
-            patience_ctr += 1
-
-        if cfg.patience > 0 and patience_ctr >= cfg.patience:
-            break
+    return summary
 
     summary = {
         "exercise_id":         exercise_id,

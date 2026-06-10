@@ -62,14 +62,34 @@ public class HomeController : Controller
         var model = await BuildDashboardViewModelAsync(selectedExerciseId);
 
         _logger.LogInformation("Selected exercise ID: {ExerciseId}", selectedExerciseId);
-        string tmpFolder = Path.Combine(Path.GetTempPath(), "kinetocheck_uploads");
-        Directory.CreateDirectory(tmpFolder);
-
+        // Check if file is missing or empty
         if (videoFile == null || videoFile.Length == 0)
         {
-            ModelState.AddModelError(string.Empty, "Please select a video file to upload.");
-            return View("Index", model);
+            ViewBag.ErrorMessage = "Please select a video file to upload.";
+            return View("Index", model); // Stops and shows error
         }
+
+        // Check the MIME type to ensure it is actually a video
+        var contentType = videoFile.ContentType.ToLowerInvariant();
+        
+        if (!contentType.StartsWith("video/"))
+        {
+            // Specifically tell them if they uploaded an image
+            if (contentType.StartsWith("image/"))
+            {
+                ViewBag.ErrorMessage = "You uploaded an image file. KinetoCheck requires a video recording of your exercise (e.g., .mp4, .mov).";
+            }
+            else
+            {
+                ViewBag.ErrorMessage = $"Unsupported file format ({Path.GetExtension(videoFile.FileName)}). Please upload a valid video file.";
+            }
+            
+            return View("Index", model); // Stops and shows error instantly
+        }
+        // -----------------------------------
+
+        string tmpFolder = Path.Combine(Path.GetTempPath(), "kinetocheck_uploads");
+        Directory.CreateDirectory(tmpFolder);
 
         var tmpFile = Path.Combine(tmpFolder, $"{Guid.NewGuid():N}_{Path.GetFileName(videoFile.FileName)}");
         await using (var stream = System.IO.File.Create(tmpFile))
@@ -92,20 +112,34 @@ public class HomeController : Controller
             }
             catch (Exception ex)
             {
-                ModelState.AddModelError(string.Empty, "Failed to contact analysis service: " + ex.Message);
-                return View("Index", model);
+                _logger.LogError(ex, "Failed to contact analysis service.");
+                ViewBag.ErrorMessage = "Failed to contact the analysis service. Please ensure the AI server is running.";
+                return View("Index", model); // STOPS REDIRECT
             }
 
+            // Handle HTTP Crashes (e.g. 500 Internal Server Error)
             if (!resp.IsSuccessStatusCode)
             {
-                var err = await resp.Content.ReadAsStringAsync();
-                ModelState.AddModelError(string.Empty, "Analysis failed: " + err);
-                return View("Index", model);
+                _logger.LogError("Analysis failed with status code {StatusCode}", resp.StatusCode);
+                ViewBag.ErrorMessage = "The analysis server encountered an error processing this video.";
+                return View("Index", model); // STOPS REDIRECT
             }
 
             var json = await resp.Content.ReadAsStringAsync();
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
+
+            // --- OUR NEW GRACEFUL ERROR CHECK ---
+            if (root.TryGetProperty("error", out var isError) && isError.ValueKind == JsonValueKind.True)
+            {
+                var errorMessage = root.TryGetProperty("message", out var msg) 
+                    ? msg.GetString() 
+                    : "An unknown error occurred during video analysis.";
+                
+                ViewBag.ErrorMessage = errorMessage;
+                return View("Index", model); // STOPS REDIRECT AND SHOWS THE ERROR
+            }
+            // ------------------------------------
 
             var currentUserId = _userManager.GetUserId(User);
             var analyzedAtUtc = DateTimeOffset.UtcNow;
@@ -220,7 +254,7 @@ public class HomeController : Controller
         }
         catch (Exception ex)
         {
-            ModelState.AddModelError(string.Empty, "Failed to parse results: " + ex.Message);
+            ViewBag.ErrorMessage = "Failed to parse results: " + ex.Message; 
             return View("Index", model);
         }
         finally
@@ -502,10 +536,76 @@ public class HomeController : Controller
         Directory.CreateDirectory(uploadDir);
 
         var fileName = Path.GetFileName(sourcePath);
+        var sourceCodec = root.TryGetProperty("annotated_video_codec", out var codecValue)
+            ? codecValue.GetString()
+            : null;
+
+        var browserReadyName = Path.ChangeExtension(fileName, ".mp4");
+        var browserReadyPath = Path.Combine(uploadDir, browserReadyName);
+
+        if (TryCreateBrowserFriendlyCopy(sourcePath, browserReadyPath, sourceCodec))
+        {
+            return $"/uploads/{normalizedSessionId}/{browserReadyName}";
+        }
+
         var destinationPath = Path.Combine(uploadDir, fileName);
         System.IO.File.Copy(sourcePath, destinationPath, overwrite: true);
 
         return $"/uploads/{normalizedSessionId}/{fileName}";
+    }
+
+    private static bool TryCreateBrowserFriendlyCopy(string sourcePath, string destinationPath, string? sourceCodec)
+    {
+        var normalizedCodec = (sourceCodec ?? string.Empty).Trim().ToLowerInvariant();
+        var sourceExtension = Path.GetExtension(sourcePath).ToLowerInvariant();
+
+        var needsTranscode = normalizedCodec == "mp4v" || sourceExtension != ".mp4";
+
+        if (!needsTranscode)
+        {
+            if (!string.Equals(sourcePath, destinationPath, StringComparison.OrdinalIgnoreCase))
+            {
+                System.IO.File.Copy(sourcePath, destinationPath, overwrite: true);
+            }
+
+            return true;
+        }
+
+        try
+        {
+            var ffmpeg = "ffmpeg";
+            var args = $"-y -i \"{sourcePath}\" -c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart \"{destinationPath}\"";
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = ffmpeg,
+                Arguments = args,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+
+            using var proc = System.Diagnostics.Process.Start(psi);
+            if (proc == null)
+            {
+                return false;
+            }
+
+            var stderrTask = proc.StandardError.ReadToEndAsync();
+            proc.WaitForExit();
+            _ = stderrTask.Result;
+
+            if (proc.ExitCode != 0)
+            {
+                return false;
+            }
+        }
+        catch
+        {
+            return false;
+        }
+
+        return System.IO.File.Exists(destinationPath);
     }
 
     private static string? GetStringOrDefault(JsonElement root, string parentProperty, string childProperty)

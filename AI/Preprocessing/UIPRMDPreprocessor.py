@@ -119,7 +119,7 @@ def build_features_from_aligned(processed: np.ndarray) -> np.ndarray:
     ROM-normalised and z-scored, shape (T, 17, 3).
 
     This is the single source of truth for feature extraction used by both
-    training and inference. Import it from here in both places.
+    training and inference. 
     """
     velocity     = np.diff(processed, axis=0, prepend=processed[:1])   # (T,17,3)
     acceleration = np.diff(velocity,  axis=0, prepend=velocity[:1])    # (T,17,3)
@@ -353,6 +353,6 @@ class UIPRMDPreprocessor:
         """
         seq = self.reshape_to_joints(keypoints)
         seq = self.pad_or_truncate(seq)
-        seq = rom_normalize(seq)
+        # seq = rom_normalize(seq)
         seq = self.normalize(seq)
         return seq.astype(np.float32)

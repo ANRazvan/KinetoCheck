@@ -354,112 +354,33 @@ def train_one_exercise(
     criterion = LossFactory().create_contrastive(margin=cfg.margin)
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate, weight_decay=cfg.weight_decay)
 
-    exercise_dir = cfg.output_dir / f"exercise_{exercise_id + 1:02d}" / fold_name
-    exercise_dir.mkdir(parents=True, exist_ok=True)
-    metrics_path = exercise_dir / "metrics.csv"
-    best_checkpoint_path = exercise_dir / "best_checkpoint.pt"
-    last_checkpoint_path = exercise_dir / "last_checkpoint.pt"
-    history_path = exercise_dir / "history.json"
+    from Train.trainer import Trainer
 
-    history: list[dict[str, float | int]] = []
-    best_val_f1 = -1.0
-    best_epoch = -1
-    best_test_metrics: dict[str, float] = {}
-    patience_counter = 0
+    trainer = Trainer(cfg)
+    summary = trainer.train(
+        exercise_id=exercise_id,
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        test_loader=test_loader,
+        criterion=criterion,
+        optimizer=optimizer,
+        device=device,
+        output_dir=cfg.output_dir,
+        template_tensor=template_tensor,
+        template_xyz_tensor=None,
+        delta_criterion=None,
+        delta_weight=0.0,
+        rom_criterion=None,
+        fold_name=fold_name,
+        held_out_subject=held_out_subject,
+        in_channels=9,
+        hidden_channels=cfg.hidden_channels,
+        embedding_dim=cfg.embedding_dim,
+        use_phase_decoder=False,
+        feature_channels=None,
+    )
 
-    for epoch in range(1, cfg.epochs + 1):
-        model.train()
-        train_losses = []
-
-        for batch in train_loader:
-            template = batch["template"].to(device)
-            user = batch["user"].to(device)
-            target = batch["target"].to(device)
-
-            optimizer.zero_grad(set_to_none=True)
-            outputs = model(template, user)
-            loss = criterion(outputs["template_embedding"], outputs["user_embedding"], target)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
-            optimizer.step()
-
-            train_losses.append(float(loss.item()))
-
-        train_loss = float(np.mean(train_losses)) if train_losses else 0.0
-        val_metrics = evaluate(model, val_loader, criterion, device)
-        test_metrics = evaluate(model, test_loader, criterion, device)
-
-        epoch_metrics = {
-            "exercise_id": exercise_id,
-            "epoch": epoch,
-            "train_loss": train_loss,
-            "val_loss": float(val_metrics["loss"]),
-            "val_threshold": float(val_metrics["threshold"]),
-            "val_accuracy": float(val_metrics["accuracy"]),
-            "val_precision": float(val_metrics["precision"]),
-            "val_recall": float(val_metrics["recall"]),
-            "val_f1": float(val_metrics["f1"]),
-            "test_loss": float(test_metrics["loss"]),
-            "test_accuracy": float(test_metrics["accuracy"]),
-            "test_precision": float(test_metrics["precision"]),
-            "test_recall": float(test_metrics["recall"]),
-            "test_f1": float(test_metrics["f1"]),
-        }
-        history.append(epoch_metrics)
-
-        checkpoint = {
-            "exercise_id": exercise_id,
-            "epoch": epoch,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "template_tensor": template_tensor,
-            "config": asdict(cfg),
-            "metrics": epoch_metrics,
-            "val_threshold": float(val_metrics["threshold"]),
-        }
-        torch.save(checkpoint, last_checkpoint_path)
-
-        with metrics_path.open("w", newline="", encoding="utf-8") as csv_file:
-            writer = csv.DictWriter(csv_file, fieldnames=list(epoch_metrics.keys()))
-            writer.writeheader()
-            writer.writerows(history)
-
-        history_path.write_text(json.dumps(history, indent=2), encoding="utf-8")
-
-        if float(val_metrics["f1"]) > best_val_f1:
-            best_val_f1 = float(val_metrics["f1"])
-            best_epoch = epoch
-            best_test_metrics = {
-                "loss": float(test_metrics["loss"]),
-                "accuracy": float(test_metrics["accuracy"]),
-                "precision": float(test_metrics["precision"]),
-                "recall": float(test_metrics["recall"]),
-                "f1": float(test_metrics["f1"]),
-                "threshold": float(val_metrics["threshold"]),
-            }
-            torch.save(checkpoint, best_checkpoint_path)
-            patience_counter = 0
-        else:
-            patience_counter += 1
-
-        if cfg.patience > 0 and patience_counter >= cfg.patience:
-            break
-
-    summary = {
-        "exercise_id": exercise_id,
-        "split_mode": cfg.split_mode,
-        "fold_name": fold_name,
-        "held_out_subject": held_out_subject,
-        "best_epoch": best_epoch,
-        "best_val_f1": best_val_f1,
-        "best_test_loss": best_test_metrics.get("loss", 0.0),
-        "best_test_accuracy": best_test_metrics.get("accuracy", 0.0),
-        "best_test_precision": best_test_metrics.get("precision", 0.0),
-        "best_test_recall": best_test_metrics.get("recall", 0.0),
-        "best_test_f1": best_test_metrics.get("f1", 0.0),
-        "best_threshold": best_test_metrics.get("threshold", 0.5),
-    }
-    (exercise_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return summary
 
 
@@ -496,7 +417,7 @@ def main(argv: Iterable[str] | None = None) -> None:
     parser = build_arg_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
 
-    config = TrainingConfig(
+    cfg = TrainingConfig(
         data_root=args.data_root,
         output_dir=args.output_dir,
         exercise_ids=parse_exercise_ids(args.exercise_ids),
@@ -517,31 +438,31 @@ def main(argv: Iterable[str] | None = None) -> None:
         split_mode=args.split_mode,
     )
 
-    config.output_dir.mkdir(parents=True, exist_ok=True)
+    cfg.output_dir.mkdir(parents=True, exist_ok=True)
 
     summaries = []
-    for exercise_id in config.exercise_ids:
-        if config.split_mode == "loso":
-            exercise_loader = UIPRMDLoader(config.data_root)
+    for exercise_id in cfg.exercise_ids:
+        if cfg.split_mode == "loso":
+            exercise_loader = UIPRMDLoader(cfg.data_root)
             exercise_records = exercise_loader.load_vicon_data(exercise_id=exercise_id)
             split_plans = build_split_plans(
                 exercise_records,
-                config.split_mode,
-                config.train_ratio,
-                config.val_ratio,
-                config.test_ratio,
-                config.seed + exercise_id,
+                cfg.split_mode,
+                cfg.train_ratio,
+                cfg.val_ratio,
+                cfg.test_ratio,
+                cfg.seed + exercise_id,
             )
             for split_plan in split_plans:
-                summary = train_one_exercise(exercise_id, config, records=exercise_records, split_plan=split_plan)
+                summary = train_one_exercise(exercise_id, cfg, records=exercise_records, split_plan=split_plan)
                 summaries.append(summary)
                 print(json.dumps(summary, indent=2))
         else:
-            summary = train_one_exercise(exercise_id, config)
+            summary = train_one_exercise(exercise_id, cfg)
             summaries.append(summary)
             print(json.dumps(summary, indent=2))
 
-    (config.output_dir / "all_exercises_summary.json").write_text(json.dumps(summaries, indent=2), encoding="utf-8")
+    (cfg.output_dir / "all_exercises_summary.json").write_text(json.dumps(summaries, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":

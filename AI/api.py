@@ -4,6 +4,8 @@ import shutil
 import sys
 import uuid
 from pathlib import Path
+from collections.abc import Sequence
+import traceback
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import JSONResponse
 
@@ -24,6 +26,19 @@ TMP_DIR = BASE_DIR / "tmp_api_uploads"
 TMP_DIR.mkdir(exist_ok=True)
 
 
+def _coerce_scalar(value: object, default: str = "auto") -> str:
+    current = value
+    while isinstance(current, Sequence) and not isinstance(current, (str, bytes, bytearray)):
+        if len(current) == 0:
+            return default
+        current = current[0]
+
+    if current is None:
+        return default
+
+    return str(current)
+
+
 @app.get("/")
 def root():
     """Health check and API info."""
@@ -36,7 +51,7 @@ def root():
 
 
 @app.post("/analyze-video/")
-async def analyze_video(video: UploadFile = File(...), exercise_id: str = Form("auth")):
+async def analyze_video(video: UploadFile = File(...), exercise_id: str = Form("auto")):
     if not video.filename.lower().endswith(('.mp4', '.mov', '.mkv', '.avi', '.webm')):
         raise HTTPException(status_code=400, detail="Unsupported file type")
 
@@ -68,6 +83,7 @@ async def analyze_video(video: UploadFile = File(...), exercise_id: str = Form("
         from inference.video_checkpoint_inference import ensure_pose_task_model, resolve_device
         device = resolve_device("auto")
         checkpoints_root = BASE_DIR / "checkpoints" / "uiprmd_phase_aware_rom"
+        # checkpoints_root = BASE_DIR / "checkpoints" / "uiprmd"
         all_models = get_cached_models(checkpoints_root, device)
         preprocessor = UIPRMDPreprocessor()
         pose_model_path = ensure_pose_task_model(None)
@@ -76,7 +92,9 @@ async def analyze_video(video: UploadFile = File(...), exercise_id: str = Form("
 
     # Filter models based on selected exercise
     models_to_run = all_models
+    exercise_id = _coerce_scalar(exercise_id)
     logger.info(f"Received exercise_id: {exercise_id}")
+
     if exercise_id and exercise_id != "auto":
         try:
             target_id = int(exercise_id) - 1  # Convert 1-indexed to 0-indexed
@@ -100,6 +118,8 @@ async def analyze_video(video: UploadFile = File(...), exercise_id: str = Form("
             pose_model_path=pose_model_path,
         )
     except Exception as exc:
+        logger.exception("Processing failed")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Processing failed: {exc}")
 
     # removing the temporary directory (but NOT the persistent uploads)
