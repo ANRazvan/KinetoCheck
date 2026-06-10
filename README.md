@@ -1,213 +1,117 @@
 # KinetoCheck
 
-AI-assisted physical rehabilitation movement assessment platform.
+![License](https://img.shields.io/badge/License-MIT-blue.svg)
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
+![.NET](https://img.shields.io/badge/.NET-8.0-purple)
+![PyTorch](https://img.shields.io/badge/PyTorch-Deep%20Learning-ee4c2c)
 
-This repository contains the ongoing bachelor thesis implementation for automatic evaluation of rehabilitation exercises from skeleton motion data. The project combines dataset-driven model training, API-based inference, video analysis, and real-time camera pipelines.
+**KinetoCheck** is an AI-assisted platform designed to evaluate physical rehabilitation movement quality using standard RGB cameras. Developed as a Bachelor Thesis project, it transcends traditional pass/fail binary classification by providing patients and clinicians with a continuous quality score and highly interpretable, biomechanical visual feedback.
 
-## 1. Project Purpose
+![Screenshot 1: Ghost Skeleton and Joints of Attention Overlay]() *(Add your annotated video/skeleton screenshot here)*
 
-KinetoCheck aims to support rehabilitation assessment by:
+## 📖 Project Overview
 
-- Detecting whether an exercise repetition is executed correctly or incorrectly.
-- Providing model confidence and explainability-oriented feedback.
-- Bridging research datasets (UI-PRMD, IntelliRehab-like formats) to practical video/camera inference.
-- Building toward real-time, therapist-friendly, objective movement analysis.
+Physical rehabilitation is critical for restoring mobility, but home routines often suffer from a lack of expert supervision. KinetoCheck solves this by leveraging a dual-stream deep learning architecture:
+1. **Spatio-Temporal Graph Attention Networks (ST-GAT)** to analyze spatial body topology.
+2. **1D-CNN Temporal Pyramids** to capture joint-angle temporal dynamics (velocity, acceleration).
 
-## 2. Current Repository Structure
+Trained on the **UI-PRMD** dataset, the system utilizes a Siamese contrastive learning approach to compare user executions against expert templates. Furthermore, an advanced **Phase-Aware Diagnostic Engine** aligns timelines via soft Dynamic Time Warping (DTW) and explicitly identifies "Joints of Attention" (JoA) to explain *why* an exercise was flagged as incorrect.
 
-- `Backend/`: Main FastAPI backend and canonical model-serving project.
-	- `app/models`, `app/preprocessing`, `app/services`: production model, preprocessing, and API inference stack.
-	- `training/`: baseline ST-GAT family training.
-	- `temporal_pyramid_stgat/`: temporal-pyramid STGAT training + inference branch.
-	- `inference/`: real-time Orbbec/Azure Kinect inference utilities.
-	- `diagnostics/`: model/data diagnostic scripts.
-	- `setup/`: environment and sensor setup scripts.
-	- `notebooks/`: backend notebooks.
-	- `weights/`: trained model checkpoints (preserved).
-- `Datasets/`: Local dataset storage (UI-PRMD and skeleton data).
-- `ExeChecker/`: Two-stream experimental pipeline (2D joints + clinical angles).
-	- `exechecker/models`, `exechecker/data`, `exechecker/training`, `exechecker/inference`: two-stream implementation.
-	- `checkpoints/`: two-stream checkpoints (preserved).
-	- `diagnostics/`, `notebooks/`: utility scripts and notebooks.
-- `frontendWeb/`: Web frontend solution folder.
-- `A-Deep-Learning-Framework-for-Assessing-Physical-Rehabilitation-Exercises-master/`: Reference research implementation and materials.
-- `RUNNING_GUIDE.md`: Practical run instructions.
-- `CUDA_SETUP_STATUS.md`: CUDA and environment setup status.
+## ✨ Key Features
 
-Canonical data policy:
-- `Datasets/UIPRMD` is the only canonical UI-PRMD dataset copy.
-- Duplicate project-local dataset copies are removed.
+* **Phase-Aware Explainable AI (XAI):** Doesn't just score movements; it maps attention weights and spatial error deltas back to the skeleton to highlight specific failing joints.
+* **Ghost Skeleton Overlay:** Generates a temporally aligned, anatomically scaled visual overlay of the "perfect" movement directly on the user's video.
+* **Range of Motion (ROM) Regularization:** Auxiliary loss networks specifically designed to detect and penalize "partial rep" executions.
+* **Auto-Detect Multi-Model Inference:** Concurrently evaluates a video against multiple exercise checkpoints to automatically determine which exercise is being performed.
+* **Longitudinal Patient Tracking:** A secure ASP.NET Core web dashboard backed by Entity Framework Core and MySQL to track recovery trends over time.
 
-Canonical model policy:
-- Keep all trained checkpoints under project-owned folders:
-	- `Backend/weights/**`
-	- `Backend/temporal_pyramid_stgat/weights/**`
-	- `ExeChecker/checkpoints/**`
+## 📂 Repository Structure
 
-## 3. What Has Been Done So Far
+The project is strictly separated into a Python Machine Learning backend and a C# MVC frontend.
 
-The following work is already implemented and documented in this repository.
+```text
+KinetoCheck/
+├── AI/                                  # Python / PyTorch Inference Engine
+│   ├── api.py                           # FastAPI entry point
+│   ├── app/                             # Core inference and routing logic
+│   ├── checkpoints/                     # Pre-trained model weights (.pt files)
+│   ├── FeaturePipelines/                # 12-channel kinematic feature engineering
+│   ├── Models/                          # ST-GAT, Phase Aligner, Frame Decoder definitions
+│   ├── Preprocessing/                   # MediaPipe to 17-joint mapping & normalization
+│   └── tmp_api_uploads/                 # Ephemeral storage for video processing
+│
+├── App/                                 # C# / ASP.NET Core Web Dashboard
+│   ├── Controllers/                     # MVC routing (Home, Account, Analysis)
+│   ├── Data/                            # Entity Framework Core DbContext
+│   ├── Migrations/                      # SQL schema migrations
+│   ├── Models/                          # Domain entities (Upload, JointInsight, etc.)
+│   ├── ViewModels/                      # Aggregated statistics for tracking
+│   ├── Views/                           # Razor HTML/CSS/Bootstrap frontend
+│   └── Program.cs                       # .NET application bootstrapping
+│
+├── Datasets/                            # Local storage for UI-PRMD / Vicon data
+├── KinetoCheck.sln                      # Visual Studio Solution File
+└── README.md
+``` 
+🚀 Getting Started
+Prerequisites
+Python 3.10+ (with a CUDA-enabled GPU highly recommended)
 
-### 3.1 Core Backend and API
+.NET 8.0 SDK
 
-- FastAPI backend with prediction endpoints, health/model endpoints, and Swagger docs.
-- Video and keypoint inference routes.
-- Service-oriented architecture (facade-style inference service, model repository, preprocessing adapters).
-- Dataset-aware preprocessing pipelines for different skeleton formats.
+MySQL Server (Running locally or via Docker)
 
-### 3.2 ST-GAT Training Pipeline (Mainline)
+1. Running the AI Backend (FastAPI)
+The AI backend acts as a microservice that the web application talks to. It handles video pose extraction, temporal alignment, and ST-GAT inference.
 
-- Per-exercise binary classification (`correct` vs `incorrect`) training flow.
-- Sequence normalization to fixed temporal length.
-- Callback-based training loop (early stopping, checkpointing, LR scheduling).
-- Multiple dataset variants supported via abstract factory approach.
+```Bash
+# Navigate to the AI directory
+cd AI
 
-### 3.3 Temporal Pyramid STGAT Expansion
+# Activate your virtual environment (Windows)
+.venv\Scripts\activate
 
-- Temporal-pyramid training and deployment selection workflows.
-- Video inference tooling and assessment CSV outputs.
-- Leave-One-Subject-Out (LOSO) support for stronger subject-level validation.
-
-### 3.4 MediaPipe 33-Joint Retraining Work
-
-- Implemented conversion pipeline from Vicon-style representation to MediaPipe 33 landmarks.
-- Added 12-angle extraction and standardization stream.
-- Added dedicated training and validation scripts for MediaPipe-aligned checkpoints.
-- Addressed domain mismatch between training and video inference feature spaces.
-- Backend pose extraction path now uses MediaPipe as default and keeps 3D coordinates (`x`, `y`, `z`) for inference where the selected dataset/model expects 3D inputs.
-
-### 3.5 Orbbec / Azure Kinect Real-Time Prototype
-
-- Real-time joint extraction module (`Backend/inference/orbbec_joint_extractor.py`) with:
-	- 32-joint to UI-PRMD-style mapping.
-	- Pelvis-centered, torso-scaled normalization.
-	- Streaming-friendly threaded frame capture design.
-- Setup scripts and troubleshooting guides for Windows sensor stack and `pyk4a`.
-- Visualizer and real-time inference integration scripts.
-
-### 3.6 Diagnostics and Validation Utilities
-
-- Label-swap hypothesis testing scripts for Vicon data issues.
-- Dataset-specific diagnostics and import tests.
-- Documentation for architecture patterns and pipeline behavior.
-
-### 3.7 ExeChecker Two-Stream Branch
-
-- Separate two-stream model branch combining:
-	- STGAT over 2D joint trajectories.
-	- Temporal CNN over angle signals.
-- Triplet-based embedding training and LOSO evaluation.
-- Joint-attention interpretability artifacts.
-
-## 4. Current Status (March 2026)
-
-### Completed
-
-- End-to-end backend infrastructure for offline inference.
-- Multiple trainable model pipelines and dataset adapters.
-- MediaPipe retraining infrastructure for better train/infer alignment.
-- Initial real-time camera ingestion prototype (Orbbec path).
-
-### In Progress
-
-- Consolidation of model variants into one stable production path.
-- Robust cross-exercise benchmarking and metrics standardization.
-- Real-time reliability validation in practical usage conditions.
-
-### Known Constraints
-
-- Local NVIDIA GPU is available, but CUDA-enabled PyTorch installation is currently blocked by network/package access constraints in one environment.
-- Some scripts remain experimental/research-oriented and require careful configuration per dataset and checkpoint.
-- Multi-repetition video segmentation is still an open improvement area.
-
-## 5. Intended Direction (What Will Be Done Next)
-
-This section captures project intent for upcoming thesis and engineering milestones.
-
-### Short Term
-
-- Finalize one canonical training + inference pipeline for thesis experiments.
-- Run structured LOSO and cross-subject evaluation across targeted exercises.
-- Improve reproducibility (fixed configs, saved experiment manifests, clearer checkpoints).
-
-### Mid Term
-
-- Improve explainability output quality (joint-level and temporal feedback consistency).
-- Add repetition-level segmentation for long clips with multiple repetitions.
-- Strengthen real-time camera pipeline robustness and fallback behavior.
-
-### Long Term
-
-- Integrate clinician-facing reporting/feedback views.
-- Expand to broader exercise coverage and larger test cohorts.
-- Package as a stable application workflow suitable for practical pilot testing.
-
-## 6. Bachelor Thesis Contribution Focus
-
-The thesis contribution in this project is centered on:
-
-- Designing a practical end-to-end architecture from capture/video to assessment.
-- Solving representation mismatch between training data and real inference data.
-- Prototyping real-time skeleton extraction and normalization for deployment readiness.
-- Evaluating model behavior with subject-aware protocols and diagnostic tools.
-
-In short: the originality is the integration effort across heterogeneous data formats, model families, and runtime conditions into one rehabilitation-focused assessment system.
-
-## 7. Quick Start
-
-For complete run instructions, see `RUNNING_GUIDE.md`.
-
-Basic backend start:
-
-```powershell
-cd Backend
+# Install requirements (if not already done)
 pip install -r requirements.txt
-python run.py
+
+# Run the FastAPI server
+python -u api.py
 ```
+The API will be available at http://localhost:8000. You can view the Swagger documentation at http://localhost:8000/docs.
 
-Pose backend selection (optional):
+2. Running the Web Frontend (ASP.NET Core)
+The frontend provides the clinical dashboard, user authentication, and upload interfaces.
 
-```powershell
-# Default is now MediaPipe 3D
-$env:POSE_EXTRACTOR = "mediapipe"
+```Bash
+# Open a new terminal and navigate to the App directory
+cd App
 
-# Fallback to YOLO 2D if needed
-$env:POSE_EXTRACTOR = "yolo"
+# Apply Entity Framework database migrations to your MySQL instance
+dotnet ef database update
+
+# Run the web application
+dotnet run
 ```
+The web dashboard will be available at http://localhost:5000 (or the port specified in your console).
 
-API docs:
+![alt text](UploadVideo.png)
+![alt text](Results_page.png)
 
-- `http://localhost:8000/docs`
 
-Temporal Pyramid STGAT training/inference examples are documented in `RUNNING_GUIDE.md` and backend markdown guides.
+🧠 Architectural Highlights
+The Inference Pipeline
+Pose Extraction: RGB videos are processed using MediaPipe to extract 33 landmarks, which are reduced to a 17-joint COCO-compatible topology.
 
-## 8. Key Tech Stack
+Geometric Normalization: Skeletons are translation-invariant (pelvis-centered) and scale-invariant (torso-normalized) to prevent "identity leakage" where the AI memorizes patient height instead of movement quality.
 
-- Python, FastAPI, Uvicorn
-- PyTorch, Torch Geometric
-- OpenCV, MediaPipe, Ultralytics (pose extraction)
-- NumPy, SciPy, scikit-learn
-- Optional `pyk4a` for Orbbec/Azure Kinect-compatible pipelines
+12-Channel Representation: Raw spatial coordinates (XYZ) are augmented with velocity, acceleration, joint angles, and angular velocities.
 
-## 9. Important Notes for Future Work
+Siamese Evaluation: The ExerciseEvaluator compares the user's sequence to a template using graph attention blocks and temporal dilated convolutions to produce a final Euclidean/Cosine similarity score.
 
-- Keep dataset split protocols and labels strictly versioned.
-- Prioritize model calibration and repeatability over raw single-run accuracy.
-- Treat real-time camera support as deployment engineering, not only model training.
-- Maintain one source of truth for checkpoint selection and experiment tracking.
+🎓 Academic Context
+This repository constitutes the practical implementation for the Bachelor's Thesis:
+"Assessment of Physical Rehabilitation Exercises using Deep Learning and Computer Vision"
+Babeș-Bolyai University, Faculty of Mathematics and Computer Science (2026).
 
-## 10. Document References
-
-- `RUNNING_GUIDE.md`
-- `CUDA_SETUP_STATUS.md`
-- `Backend/STGAT_TRAINING_EXPLANATION.md`
-- `Backend/MEDIAPIPE_IMPLEMENTATION_SUMMARY.md`
-- `Backend/MEDIAPIPE_QUICKSTART.md`
-- `Backend/INTELLIREHAB_2D_TRAINING_AND_3D_COMPARISON.md`
-- `Backend/LABEL_SWAP_TEST_GUIDE.md`
-- `Backend/DESIGN_PATTERNS.md`
-- `Backend/WINDOWS_PYK4A_FIX.md`
-
----
-
-If you are using this repository as your thesis master project log, keep this README updated each time a milestone is validated (new experiment result, architecture change, or deployment step).
+Author: Alexe Nicolae Răzvan
+Supervisor: Lect. Dr. Iuliana Bocicor
