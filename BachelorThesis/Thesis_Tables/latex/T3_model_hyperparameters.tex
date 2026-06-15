@@ -1,0 +1,27 @@
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{|p{1.5cm}|p{3.5cm}|p{2.0cm}|p{2.0cm}|p{5.0cm}|}
+\hline
+\textbf{Group} & \textbf{Parameter} & \textbf{Value} & \textbf{Unit/Range} & \textbf{Comment} \\ \hline
+model & \texttt{in\_channels} & 9/12 & channels & xyz(+velocity+acceleration) \\ \hline
+model & \texttt{hidden\_channels} & (64, 128) & tuple & ST-GAT blocks \\ \hline
+model & \texttt{embedding\_dim} & 128 & dim & Siamese projection head \\ \hline
+model & \texttt{use\_phase\_decoder} & True & boolean & Enables temporal alignment module \\ \hline
+optimizer & \texttt{learning\_rate} & 1e-3 & & Initial learning rate \\ \hline
+optimizer & \texttt{weight\_decay} & 1e-4 & & L2 regularization penalty \\ \hline
+optimizer & \texttt{margin} & 1.0 & & Contrastive loss margin \\ \hline
+training & \texttt{delta\_weight} & 0.0 & & Frame-level correction loss weight \\ \hline
+training & \texttt{rom\_weight} & 2.0 & & Range-of-motion loss weight \\ \hline
+data & \texttt{batch\_size} & 8 & samples & Training batch size \\ \hline
+data & \texttt{num\_workers} & 0 & threads & DataLoader workers \\ \hline
+training & \texttt{epochs} & 30 & epochs & Maximum training epochs \\ \hline
+training & \texttt{patience} & 10 & epochs & Early stopping patience \\ \hline
+training & \texttt{seed} & 42 & & Random seed for reproducibility \\ \hline
+training & \texttt{device} & auto & & Hardware accelerator \\ \hline
+split & \texttt{split\_mode} & subject & & Determines data partitioning strategy \\ \hline
+split & \texttt{train/val/test ratio} & 0.8/0.1/0.1 & ratio & Dataset split proportions \\ \hline
+\end{tabular}
+\caption{Model hyperparameters and training settings}
+\label{tab:T3}
+\end{table}

@@ -1,0 +1,112 @@
+\chapter{State of the Art and Theoretical Background}
+\label{chap:theory}
+
+This chapter is organized into two parts. The first develops the theoretical foundations required to understand KinetoCheck, and the second reviews the most relevant prior work before synthesizing the research gaps that motivate the thesis contribution.
+
+\section{Theoretical Foundations}
+\label{sec:theory-foundations}
+
+The following subsections introduce the conceptual building blocks used throughout the thesis.
+
+\subsection{Motion Analysis and Human Pose Estimation}
+\label{subsec:motion-analysis}
+
+Automated assessment of rehabilitation movements depends on reliable pose acquisition and clinically meaningful temporal interpretation. Two broad families dominate current systems: marker-based motion capture and markerless visual pose estimation.
+
+Marker-based systems, such as Vicon, estimate body kinematics from reflective markers tracked by calibrated cameras, and are generally considered high-precision in controlled laboratory settings \cite{ZGAA25}. Their primary strengths are geometric accuracy and repeatability; however, hardware cost, setup complexity, and the need for supervised capture environments reduce accessibility for home rehabilitation scenarios \cite{ZGAA25}.
+
+Markerless systems, including MediaPipe Pose Landmarker, infer keypoints directly from RGB input and thus support low-cost, scalable deployment \cite{LTN+19,BGR+20,CSWS17}. These approaches improve practicality, but are more sensitive to occlusions, illumination variability, camera angle changes, and partial-body visibility \cite{BGR+20,CSWS17}. Consequently, a practical rehabilitation system must treat pose extraction uncertainty as a first-class design constraint.
+
+For this thesis, the training phase relies on the UI-PRMD dataset, while deployment relies on RGB-based pose extraction. This cross-domain setup requires representation-level compatibility between high-quality motion capture trajectories and noisier in-the-wild visual keypoints. Theoretical implications include the need for invariant normalization, stable temporal resampling, and robustness-oriented feature design.
+
+The dataset composition used in this thesis is summarized in Table~\ref{tab:T1} (see Chapter 5 for full dataset details used in experiments). 3D joint visualizations for the original Vicon and the reduced 17-joint mapping are shown in Chapter 5 Figure~\ref{fig:vicon-comparison}.
+
+\subsection{Skeleton-Based Learning for Time Series}
+\label{subsec:skeleton-learning}
+
+Human movement can be modeled as a time-indexed sequence of articulated joint states. In this formulation, each frame is represented by a set of keypoints, and a complete repetition forms a multivariate temporal signal.
+
+Let $T$ denote the number of time steps, $N$ the number of joints, and $C$ the coordinate dimension. A skeletal sequence is represented as:
+\begin{equation}
+X \in \mathbb{R}^{T \times N \times C}
+\end{equation}
+In rehabilitation assessment, this representation is preferred over raw RGB because it suppresses texture/background noise and emphasizes biomechanical structure \cite{ZGAA25}.
+
+Graph modeling is a natural extension of this formulation. The body is encoded as a graph $G = (V,E)$, where nodes correspond to joints and edges to anatomical relations. This captures the non-Euclidean dependencies among body parts and enables locality-aware processing across physically connected joints \cite{CXJS22,GYDD18}. Compared with flat vector encodings, graph representations preserve meaningful topology needed to identify compensatory motion patterns.
+
+In KinetoCheck, additional temporal features such as velocity and acceleration are used to represent execution quality beyond static posture. The theoretical motivation is that incorrect movement often manifests as trajectory irregularity or unstable timing rather than endpoint error alone.
+
+The joint mapping used for representation alignment is summarized in Table~\ref{tab:T2_joint_mapping}.
+
+\input{Thesis_Tables/latex/T2_joint_mapping_vicon_to_17}
+
+\subsection{GNNs and ST-GAT for Rehabilitation Assessment}
+\label{subsec:gnn-stgat}
+
+Graph Neural Networks (GNNs) extend deep learning to structured relational data. For movement analysis, spatial-temporal graph models process inter-joint relations and time evolution, which makes them suitable for quality-sensitive exercise assessment \cite{CXJS22,GYDD18}.
+
+Spatio-Temporal Graph Attention Networks (ST-GAT) improve over fixed-neighborhood graph convolutions by learning attention weights that adapt to exercise phase and local error context. Intuitively, not all joints are equally informative at every moment. During one phase of an exercise, knee and hip joints may dominate quality evidence, while during another phase trunk compensation may become decisive.
+
+Formally, attention coefficients are computed from learned node projections and normalized over local neighborhoods. This mechanism gives the model adaptive selectivity while retaining graph structure. Graph attention with multi-scale temporal modeling further increases representational diversity by allowing parallel focus patterns \cite{CXJS22}.
+
+Temporal modeling can be integrated with recurrent models (RNN/LSTM), temporal convolutional networks (TCN), or transformer-style self-attention. RNNs capture sequential context but may struggle with long dependencies and parallelization. TCNs are efficient and stable for fixed-window processing. Transformers model long-range relations but often require larger datasets and careful regularization \cite{CXJS22,GYDD18}. A temporal pyramid strategy offers a practical compromise: multiple temporal resolutions improve robustness to speed variation while maintaining manageable computational complexity.
+
+
+
+\subsection{Siamese Networks and Pairwise Metric Learning}
+\label{subsec:siamese-metric}
+
+Usual classification predicts discrete labels. In rehabilitation, however, movement quality is often continuous and progression-oriented. Pairwise metric learning addresses this by embedding repetitions into a latent space where geometric distance reflects execution similarity \cite{BGL+93, HCL06, KZS15}.
+
+Given two sequences $x_i$ and $x_j$, a Siamese encoder $f(\cdot)$ produces embeddings $z_i = f(x_i)$ and $z_j = f(x_j)$. A similarity score is then derived from a distance or similarity function such as cosine similarity. Contrastive objectives enforce smaller distances for similar-quality pairs and larger distances for dissimilar-quality pairs.
+
+For the contrastive formulation used in this thesis, the model learns from pairs rather than triplets. Let $z_a$ and $z_b$ be the embeddings of a template and a user execution, and let $y \in \{0, 1\}$ indicate whether the pair is similar. A standard objective is:
+\begin{equation}
+\mathcal{L}_{contrastive} = y \cdot d(z_a, z_b)^2 + (1 - y) \cdot \max(0, m - d(z_a, z_b))^2
+\end{equation}
+where $m$ is a positive margin. Decision thresholds can then convert similarity scores into correct/incorrect predictions, while preserving the option to report confidence-like or quality-like scalar outputs.
+
+From a theoretical perspective, this paradigm is aligned with rehabilitation goals: it supports both binary decisions for screening and graded progress tracking across sessions.
+
+\subsection{Explainability in Movement Assessment}
+\label{subsec:explainability}
+
+Clinical usability requires not only a decision but also an explanation. Attention-based models provide one interpretable signal: joint-level importance derived from learned attention patterns. In KinetoCheck, this notion is operationalized as problematic or salient joints that contribute strongly to a low-quality decision.
+
+Explainability in this context should be treated cautiously. High attention does not automatically imply causal biomechanical error, and visual explanations may be affected by input noise, landmark jitter, and graph connectivity assumptions \cite{JW19,AGM+18,Rud19}. Therefore, attention-based feedback is best interpreted as decision support, not as a substitute for expert diagnosis.
+
+Actionable feedback design must satisfy three conditions: localizability (which joints), temporal context (when in the motion cycle), and readability (how users understand corrective hints). These principles motivate coupling model outputs with visual overlays and structured textual summaries in the practical system.
+
+
+
+\section{Review of Related Work}
+\label{sec:related-work}
+
+This section surveys the most relevant movement-assessment literature and positions the thesis against it.
+
+\subsection{Traditional Movement Assessment}
+\label{subsec:rw-traditional}
+
+Early systems for rehabilitation assessment relied on non-learning-based techniques, including Dynamic Time Warping (DTW) and Gaussian Mixture Models (GMM). While these methods were interpretable, they struggled with subject variability and lacked the capacity to learn deep hierarchical movement representations. Comparative benchmark analyses on rehabilitation datasets further motivate the transition to more expressive learned representations \cite{ZGAA25}.
+
+\subsection{The Pioneer Deep Learning Framework (Liao et al.)}
+\label{subsec:rw-liao}
+
+The first significant deep-learning implementation for rehabilitation assessment was proposed by Liao et al. (2020) \cite{LVX20}, who introduced the UI-PRMD dataset and established a benchmark. The model introduced a Temporal Pyramid + LSTM design, where parallel 1D-CNN branches processed joint displacement signals at different time scales before temporal integration with a multi-layer LSTM. This foundational work demonstrated that hierarchical spatio-temporal modeling is essential for movement quality regression. It also highlighted the importance of multi-scale temporal representation, a principle adopted in the ST-GAT architecture used in this thesis.
+
+\subsection{Contemporary GCN and Transformer Models}
+\label{subsec:rw-contemporary}
+
+Recent research has moved toward graph-based architectures that preserve human body topology more effectively \cite{CXJS22,GYDD18}. Notable contemporary approaches include ExeChecker (2024–2025), which introduced Joints of Attention (JoA) by extracting attention weights from STGAT backbones to provide localized feedback on problematic joints, directly influencing KinetoCheck’s interpretability design. DSTGCNT combines dense graph convolutions with GRU and Transformer components for high-accuracy quality scoring with efficient inference, exemplifying transformer-augmented spatial-temporal graph modeling \cite{CXJS22}. EGCN++ represents strong state-of-the-art performance on UI-PRMD by fusing position and orientation features \cite{yu2024egcn}. More broadly, recent analyses show that feature design and model choice remain strongly dataset-dependent \cite{ZGAA25}.
+
+\subsection{Video-Based and Smartphone Telerehabilitation}
+\label{subsec:rw-video}
+
+Recent implementations by Chander et al. (2025) \cite{CBS25} transitioned these methods to RGB-only settings using MediaPipe \cite{LTN+19} keypoint extraction. Their results highlight the feasibility of home deployment through live repetition counting via autocorrelation and lightweight Transformer-based recognition. This work directly motivates the deployment choices made in KinetoCheck.
+
+\section{Critical Synthesis and Research Gaps}
+\label{sec:research-gaps}
+
+Despite substantial progress in the field, three critical gaps remain unresolved. First, cross-domain consistency between laboratory motion capture and RGB-based inference remains underexplored; this thesis addresses it through systematic representation alignment. Second, many high-performing methods emphasize accuracy while providing limited clinically actionable interpretability; KinetoCheck prioritizes joint-level feedback mechanisms. Third, thresholding and score calibration strategies are often underreported, which reduces reproducibility and practical comparability across studies \cite{ZGAA25,CXJS22}.
+
+By combining representation alignment, Siamese ST-GAT similarity learning, and interpretable joint-level feedback under strict subject-invariant evaluation protocols, this thesis contributes a comprehensive framework that addresses these gaps. The next chapter formalizes the practical system requirements and architectural design needed to realize this framework as an operational application.

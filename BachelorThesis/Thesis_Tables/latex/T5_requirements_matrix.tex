@@ -1,0 +1,23 @@
+\begin{table}[H]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.12}
+\begin{tabularx}{\textwidth}{|>{\centering\arraybackslash}p{1.2cm}|>{\centering\arraybackslash}p{0.9cm}|>{\raggedright\arraybackslash}X|>{\centering\arraybackslash}p{1.4cm}|>{\raggedright\arraybackslash}p{2.5cm}|>{\raggedright\arraybackslash}X|}
+\hline
+Req ID & Type & Requirement & Priority & Verification Method & Acceptance Criterion \\
+\hline
+F-01 & F & User shall upload a supported video file for analysis. & Must & Functional test & Valid file is accepted and processing starts. \\
+F-02 & F & System shall extract 17-joint pose sequence from uploaded video. & Must & Pipeline log + output check & Sequence tensor generated with expected shape. \\
+F-03 & F & System shall run checkpoint-based inference and output label/score. & Must & Functional test & Report contains predicted label, score, threshold. \\
+F-04 & F & System shall generate an annotated output video. & Must & Artifact inspection & Annotated MP4 exists and is downloadable. \\
+F-05 & F & System shall provide problematic-joint feedback in report. & Should & JSON schema check & worst\_joints field includes ranked entries. \\
+NF-01 & NF & Pipeline shall be reproducible from scripts/configuration. & Must & Re-run reproducibility test & Comparable metrics reproduced from same checkpoint/data. \\
+NF-02 & NF & System shall be maintainable with modular preprocessing/model/inference code. & Should & Code review & Clear module boundaries and documented interfaces. \\
+NF-03 & NF & Inference shall tolerate temporary landmark dropouts. & Must & Robustness test & No crash; missing frames handled with fallback strategy. \\
+NF-04 & NF & Web output shall be browser-compatible for video playback. & Should & Cross-browser test & Playable or downloadable output in major browsers. \\
+\hline
+\end{tabularx}
+\caption{Functional and non-functional requirements matrix}
+\label{tab:T5}
+\end{table}

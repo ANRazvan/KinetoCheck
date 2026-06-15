@@ -1,0 +1,53 @@
+% ==========================================
+% CHAPTER 6: CONCLUSIONS
+% ==========================================
+\chapter{Conclusions and Future Directions}
+\label{chap:conclusions}
+
+This chapter summarizes the contributions of the thesis and reflects on their significance within the broader context of rehabilitation technology and machine learning. It recapitulates how the work addresses the research gaps identified in Chapter 2, consolidates the key findings from the experimental validation in Chapter 5, and outlines promising directions for future research and practical deployment.
+
+\section{Thesis Contributions Summary}
+This thesis has developed KinetoCheck, a comprehensive framework for interpretable, subject-invariant rehabilitation exercise quality assessment. The key contributions span four complementary areas:
+
+\begin{itemize}
+    \item \textbf{Representation and Model Design:} Proposed and implemented systematic geometric normalization and preprocessing strategies that enable reliable transfer from laboratory motion-capture training (UI-PRMD) to real-world RGB-based deployment via MediaPipe. Organized the implementation around feature strategies, allowing the training pipeline to switch between baseline XYZ features and angle-augmented features.
+    
+    \item \textbf{Subject-Invariant Training and Evaluation:} Applied rigorous subject-level split protocols (subject-wise and Leave-One-Subject-Out) to ensure that models generalize to unseen subjects rather than overfitting to subject-specific body characteristics. Centralized the training loop in a reusable trainer so that baseline, factory-based, and phase-aware runs share the same evaluation and checkpointing logic.
+    
+    \item \textbf{Interpretability and Clinical Actionability:} Extracted and operationalized attention-based explanations as joint-level feedback overlays (Joints of Attention), providing localized corrective hints that guide users and therapists toward movement improvements. Designed a standalone analytics service that aggregates individual inference results into user-level progress metrics, enabling longitudinal tracking.
+    
+    \item \textbf{End-to-End System Integration:} Implemented a modular, maintainable system that separates training, inference, and reporting components. Engineered checkpoint management and factory-pattern loading that gracefully switches between baseline, phase-aware, and ROM-regularized model variants. Implemented comprehensive error detection and user-transparent fallback behaviors for common failure modes.
+\end{itemize}
+
+\section{Key Empirical Findings}
+The experimental validation in Chapter 5 yields several important findings across three dimensions:
+
+\begin{itemize}
+    \item \textbf{Performance Improvements:} The comparison in Chapter 5 shows distinct performance differences between the baseline and phase-aware variants. LOSO evaluation, when used, produces more conservative estimates than subject-wise splits, confirming the necessity of rigorous split protocols.
+    
+    \item \textbf{Interpretability Validation:} Qualitative analysis of feedback overlays demonstrates that the model highlights clinically meaningful error locations, lending credibility to the interpretability claims. The phase-aware variant exposes additional correction metadata, which improves the readability of the feedback presented to the user.
+    
+    \item \textbf{Generalization and Robustness:} Subject-invariant training via geometric normalization and augmentation effectively mitigates identity leakage. ROM regularization provides robustness against partial-range executions, reducing false positives in clinical scenarios where full range-of-motion is medically necessary.
+\end{itemize}
+
+\section{Limitations and Honest Assessment}
+While the contributions are substantial, several limitations warrant explicit discussion. The UI-PRMD dataset is modest in scale; future work should validate generalization across broader demographic ranges and exercise repertoires. Furthermore, the thesis has focused primarily on offline evaluation from pre-recorded videos. Real-time performance, user interface design, and clinician feedback integration remain important practical considerations.
+
+Finally, as discussed in Chapter 2, attention mechanisms are heuristics, not causal explanations. The feedback overlays provide useful decision support but should not be interpreted as definitive biomechanical diagnoses.
+
+\section{Future Research Directions}
+Several promising directions emerge from this work:
+
+\begin{itemize}
+    \item \textbf{Dataset Expansion and Clinical Diversity:} While the UI-PRMD dataset provided a strong foundational benchmark, gathering a larger, more diverse dataset—particularly one including patients with documented musculoskeletal pathologies—would further enhance the model's generalization capabilities and clinical reliability.
+    
+    \item \textbf{Real-Time Inference and Live Feedback:} Transitioning the current offline, video-based pipeline into a real-time streaming architecture. By utilizing a sliding temporal window over live camera feeds, the system could provide immediate, intra-repetition postural corrections, significantly enhancing the interactive telerehabilitation experience.
+    
+    \item \textbf{Automated Repetition Segmentation and Counting:} Extending the temporal alignment and phase-aware modules to process continuous, unsegmented video streams. This would allow the system to automatically count repetitions and evaluate kinematic fatigue over the course of a full rehabilitation set, rather than evaluating isolated, single repetitions.
+    \item \textbf{Multi-Modal Integration:} Extending the framework to fuse RGB and depth data to improve robustness in challenging lighting or occlusion scenarios.
+\end{itemize}
+
+\section{Concluding Remarks}
+This thesis has presented a comprehensive framework for interpretable, subject-invariant rehabilitation exercise assessment. By combining rigorous machine learning practices with practical system engineering, KinetoCheck demonstrates that high-performance rehabilitation AI is achievable without sacrificing clinical transparency.
+
+As rehabilitation technology continues to evolve, this thesis contributes both concrete tools and methodological insights that will hopefully inform future work in clinical AI. The code, data, and detailed documentation provided are offered in the spirit of open science, with the hope that they accelerate progress in rehabilitation technology.

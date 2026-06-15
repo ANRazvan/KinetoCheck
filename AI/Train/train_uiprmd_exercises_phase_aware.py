@@ -175,21 +175,6 @@ def split_by_subject(
     return train_records, val_records, test_records
 
 
-# def build_template_tensor(
-#     records: list[dict], preprocessor: UIPRMDPreprocessor
-# ) -> torch.Tensor:
-#     correct_records = [r for r in records if int(r["label"]) == 0]
-#     if not correct_records:
-#         raise ValueError("No correct samples to build a template.")
-#
-#     tensors = []
-#     for r in correct_records:
-#         aligned   = preprocessor.align_vicon_to_mediapipe(r["sequence"])
-#         processed = preprocessor.process(aligned)
-#         features  = build_features_from_aligned(processed)  # (12, T, 17)
-#         tensors.append(torch.from_numpy(features).float())
-#
-#     return torch.stack(tensors, dim=0).mean(dim=0)
 
 def build_template_tensor(
     records: list[dict], preprocessor: UIPRMDPreprocessor
@@ -231,79 +216,6 @@ def _resample_to(arr: np.ndarray, target_T: int) -> np.ndarray:
         out[:, feat] = np.interp(dst_t, src_t, flat[:, feat])
     return out.reshape(target_T, *original_trailing)
 
-
-# def build_raw_xyz_template(records: list[dict], preprocessor: UIPRMDPreprocessor) -> torch.Tensor:
-#     """
-#     Build a template in RAW un-preprocessed XY coordinates for the overlay.
-#
-#     WHY NOT align_vicon_to_mediapipe() / preprocessor.process():
-#     -------------------------------------------------------------
-#     align_vicon_to_mediapipe() subtracts the hip midpoint, putting output
-#     in body-centred metric space — NOT [0,1] image fractions.
-#     preprocessor.process() z-scores on top of that — even further off.
-#     The ghost overlay needs image-fraction XY (matching MediaPipe output at
-#     runtime) so joints map to the correct pixel positions.
-#
-#     Coordinate source:
-#     ------------------
-#     For MediaPipe datasets, record["sequence"] already contains raw
-#     image-fraction XY in shape (T, 17, 3) or flat (T, 51).  We use that.
-#     For Vicon datasets (39-joint), image fractions are unavailable; we fall
-#     back to body-centred coords — the overlay will be approximate.
-#
-#     Variable-length fix:
-#     --------------------
-#     Sequences have different frame counts.  We resample every sequence to
-#     the median length via linear interpolation before averaging, which fixes
-#     the "stack expects each tensor to be equal size" RuntimeError.
-#
-#     Returns
-#     -------
-#     torch.Tensor  shape (3, T, J)
-#         Ch 0,1 = image-fraction X, Y  (~[0,1]).
-#         Ch 2   = Z / depth (not used for 2-D overlay).
-#     """
-#     correct_records = [r for r in records if int(r["label"]) == 0]
-#     if not correct_records:
-#         raise ValueError("No correct samples to build raw XYZ template.")
-#
-#     raw_list: list[np.ndarray] = []
-#     using_raw_image_fractions = True
-#
-#     for r in correct_records:
-#         seq = np.asarray(r["sequence"], dtype=np.float32)
-#
-#         if seq.ndim == 3 and seq.shape[1] == 17:
-#             # (T, 17, 3) — raw MediaPipe image-fraction XYZ
-#             raw_list.append(seq)
-#         elif seq.ndim == 2 and seq.shape[1] == 51:
-#             # (T, 51) flat MediaPipe → reshape to (T, 17, 3)
-#             raw_list.append(seq.reshape(seq.shape[0], 17, 3))
-#         else:
-#             # Vicon data (39-joint or flat): image fractions unavailable.
-#             # Use body-centred aligned coords as a best approximation.
-#             using_raw_image_fractions = False
-#             aligned = preprocessor.align_vicon_to_mediapipe(seq)  # (T, 17, 3)
-#             raw_list.append(aligned)
-#
-#     if not using_raw_image_fractions:
-#         print(
-#             "  [warn] build_raw_xyz_template: dataset appears to be Vicon data "
-#             "(not MediaPipe image fractions).  Ghost overlay will use "
-#             "body-centred coordinates — joint positions will be approximate."
-#         )
-#
-#     # Resample all sequences to the median frame count, then average.
-#     lengths = [a.shape[0] for a in raw_list]
-#     target_T = int(np.median(lengths))
-#
-#     tensors: list[torch.Tensor] = []
-#     for seq_arr in raw_list:
-#         resampled = _resample_to(seq_arr, target_T)          # (target_T, 17, 3)
-#         xyz = np.transpose(resampled, (2, 0, 1)).copy()      # (3, target_T, 17)
-#         tensors.append(torch.from_numpy(xyz).float())
-#
-#     return torch.stack(tensors, dim=0).mean(dim=0)           # (3, target_T, 17)
 
 def build_raw_xyz_template(
     records: list[dict], preprocessor: UIPRMDPreprocessor

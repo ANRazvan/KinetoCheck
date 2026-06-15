@@ -1,0 +1,35 @@
+\chapter{Introduction}
+\label{chap:introduction}
+
+\section{Motivation}
+\label{sec:intro-motivation}
+
+
+Physical rehabilitation is paramount for recovering functional mobility following surgery, injury, or neurological events like stroke. However, the majority of rehabilitation protocols require patients to complete routines independently at home \cite{argent2018patient}. Without direct clinical supervision, patients frequently execute movements incorrectly, leading to suboptimal muscle engagement and an increased risk of secondary injuries. Concurrently, rapid advancements in accessible sensing technologies—such as RGBbased pose estimation and affordable depth cameras—have made the deployment of automated virtual coaching systems increasingly viable. Despite these technological strides, existing systems often fail to provide actionable, clinically relevant feedback. This thesis aims to bridge this gap by developing a system that delivers anatomically meaningful guidance, pinpointing precisely where and how movement quality degrades, rather than merely offering generic pass/fail assessments.
+
+\section{Problem Statement}
+\label{sec:intro-problem}
+
+Automated rehabilitation assessment presents a fundamentally different computational challenge compared to generic human action recognition. While action recognition asks what action is being performed, rehabilitation assessment must determine how well that specific action is executed.
+Driven by the structure of benchmark datasets \cite{VJPB18}, most existing methodologies simplify this nuanced challenge into a binary classification problem \cite{ZGAA25}, which fundamentally fails to capture the gradual, incremental progress characteristic of patient recovery. 
+
+Furthermore, machine learning models trained on relatively small-scale rehabilitation datasets are highly susceptible to ”identity leakage.” In these instances, networks inadvertently memorize subject-specific physical characteristics (such as body proportions) rather than learning the generalized kinematic patterns of the movement itself. Consequently, these models suffer from severe performance degradation when evaluated on unseen patients. Finally, the ”black box” nature of traditional deep learning prevents clinicians from understanding why a movement was flagged as incorrect, severely limiting the clinical trust and adoption of these tools.
+
+\section{Aims and Objectives}
+\label{sec:intro-aims}
+
+The primary aim of this thesis is to design and develop an interpretable, subjectinvariant deep learning framework for the automated quality assessment of physical rehabilitation exercises. 
+
+To achieve this overarching goal, the research pursues the following specific objectives:
+
+\begin{itemize}
+	\item \textbf{Develop robust geometric normalization strategies} to mitigate subject-specific anthropometric bias, directly addressing the challenge of identity leakage and enabling strict cross-subject generalization (e.g., Leave-One-Subject-Out evaluation).
+	\item \textbf{Design a modular feature extraction pipeline} that seamlessly transitions between baseline spatial coordinates and angle-augmented kinematic representations to capture complex temporal dynamics.
+	\item \textbf{Formulate a contrastive learning paradigm}, utilizing validation-calibrated thresholding, to evaluate human movement quality on a continuous, quantifiable scale (ranging from 0 to 1), enabling the tracking of gradual patient recovery.
+	\item \textbf{Generate Explainable AI (XAI) visual feedback} by mapping network attention weights back to the skeletal structure, actively highlighting the ”Joints of Attention” (JoA) to localize biomechanical errors for the user.
+\end{itemize}
+
+\section{Declaration of Generative AI and AI-assisted technologies in the writing process}
+\label{sec:intro-ai-disclosure}
+
+During the preparation of this work the author used Gemini in order to generate initial drafts of some sections, accelerating the writing process, LaTeX code formatting ( table generation and mathematical expressions) and code formatting. After using this tool/service, the author reviewed and edited the content as needed and takes full responsibility for the content of the thesis.

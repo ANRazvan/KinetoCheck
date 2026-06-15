@@ -1,0 +1,160 @@
+% \documentclass[12pt]{scrreprt}
+\documentclass[12pt]{report} 
+
+% language may be romanian or english (default is english)
+% type may be bachelor or master (default is bachelor)
+\usepackage[language=english, type=bachelor]{style}
+
+%\geometry{a4paper,top=2.5cm,left=3cm,right=2.5cm,bottom=2.5cm}
+%in style
+%controlling the appearance of your headers and footers
+\usepackage{fancyhdr}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{float}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{tabularx}
+\usepackage{caption}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{microtype}
+\setlength{\emergencystretch}{3em}
+\pagestyle{fancy}
+\lhead{}
+\chead{}
+\renewcommand{\headrulewidth}{0.2pt}
+\renewcommand{\footrulewidth}{0.2pt}
+
+\begin{document}
+
+\specialization{COMPUTER SCIENCE}	
+\title{Assessment of Physical Rehabilitation
+Exercises using Deep Learning and
+Computer Vision}					   
+\author{Alexe Nicolae-Răzvan}											
+\supervisor{Conf. Dr. Bocicor Maria - Iuliana}				
+				
+\maketitle
+
+
+\newpage
+
+
+\begin{titlepage} 
+
+\begin{center}
+{\Large\textbf{
+UNIVERSITATEA BABEȘ-BOLYAI CLUJ-NAPOCA \\
+FACULTATEA DE MATEMATICĂ ȘI INFORMATICĂ \\
+SPECIALIZAREA INFORMATICĂ \\
+}}
+\end{center}
+
+\vspace{10em}
+
+\begin{center}
+{\Huge\textbf{
+LUCRARE DE LICENȚĂ
+}}
+\end{center}
+
+\vspace{3em}
+
+\begin{center}
+{\huge\textbf{Evaluarea exercițiilor de reabilitare
+fizică folosind
+Deep Learning și Computer Vision}}
+\end{center}
+
+\vspace{10em}
+
+\begin{flushleft}
+{\Large\textbf{
+Conducător științific \\ Conf. Dr. Bocicor Maria - Iuliana
+}}
+\end{flushleft}
+
+\vspace{3em}
+
+\begin{flushright}
+{\Large\textit{
+Absolvent\\ Alexe Nicolae-Răzvan
+}}
+\end{flushright}
+
+\vfill
+
+\begin{center}
+{\Large{2026}}
+\end{center}
+
+\end{titlepage}
+
+\thispagestyle{empty}
+\mbox{}
+\newpage
+\pagenumbering{roman} 
+
+\cleardoublepage
+ABSTRACT
+\vspace{0.5cm}	
+\hrule
+\vspace{0.5cm}	
+%\cleardoublepage
+
+Physical rehabilitation is critical for restoring functional mobility, 
+yet its efficacy is severely constrained by the lack of expert supervision 
+in home environments. While automated motion assessment systems present a
+ scalable solution, traditional models frequently operate as opaque "black 
+ boxes," struggling with interpretability and failing to account for natural
+  anthropometric variability among patients. This thesis introduces KinetoCheck,
+   a comprehensive AI-assisted software platform designed to evaluate movement
+    quality using standard, accessible RGB cameras. Bridging the gap between 
+    complex machine learning and clinical utility, the system is deployed as
+     a fully functional application offering an intuitive interface for both 
+     patient execution and clinical monitoring. The underlying algorithm 
+     leverages an original dual-stream deep learning architecture: one stream 
+     utilizes Spatio-Temporal Graph Attention Networks (ST-GAT) to analyze 
+     spatial body topology, while a 1D-CNN stream captures joint-angle temporal
+      dynamics. Trained on the University of Idaho Physical Rehabilitation
+       Movement Data (UI-PRMD)\cite{VJPB18}, the model employs a Siamese architecture 
+       optimized via Contrastive Loss to establish a robust, subject-invariant
+        standard for movement execution. 
+        
+        Transcending conventional binary 
+        classification, KinetoCheck evaluates patients on a continuous quality
+         scale and explicitly exploits graph attention weights to visually
+          isolate "Joints of Attention" (JoA). This novel extraction mechanism 
+          provides users with transparent, biomechanically interpretable 
+          feedback regarding specific postural errors, demonstrating that 
+          high-performance rehabilitation AI can be achieved without 
+          sacrificing clinical transparency.
+
+This work is the result of my own activity. I have neither given nor received unauthorized assistance on this work.
+\tableofcontents
+
+
+\newpage
+\pagenumbering{arabic}
+
+\input{chapters/chapter1_introduction}
+%\addcontentsline{toc}{chapter}{Introducere}
+%\addcontentsline{toc}{chapter}{Introduction}
+
+\input{chapters/chapter2_theoretical_background}
+\input{chapters/chapter3_requirements}
+\input{chapters/chapter4_training}
+\input{chapters/chapter5_experiments}
+
+\input{chapters/chapter6_conclusions}
+%\addcontentsline{toc}{chapter}{Concluzii}
+%\addcontentsline{toc}{chapter}{Conclusions}
+
+
+\bibliography{references}
+
+\end{document}

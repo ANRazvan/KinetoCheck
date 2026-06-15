@@ -1,0 +1,66 @@
+\babel@toc {english}{}\relax 
+\contentsline {chapter}{\numberline {1}Introduction}{1}{chapter.1}%
+\contentsline {section}{\numberline {1.1}Motivation}{1}{section.1.1}%
+\contentsline {section}{\numberline {1.2}Problem Statement}{1}{section.1.2}%
+\contentsline {section}{\numberline {1.3}Aims and Objectives}{2}{section.1.3}%
+\contentsline {section}{\numberline {1.4}Declaration of Generative AI and AI-assisted technologies in the writing process}{2}{section.1.4}%
+\contentsline {chapter}{\numberline {2}State of the Art and Theoretical Background}{4}{chapter.2}%
+\contentsline {section}{\numberline {2.1}Theoretical Foundations}{4}{section.2.1}%
+\contentsline {subsection}{\numberline {2.1.1}Motion Analysis and Human Pose Estimation}{4}{subsection.2.1.1}%
+\contentsline {subsection}{\numberline {2.1.2}Skeleton-Based Learning for Time Series}{5}{subsection.2.1.2}%
+\contentsline {subsection}{\numberline {2.1.3}GNNs and ST-GAT for Rehabilitation Assessment}{7}{subsection.2.1.3}%
+\contentsline {subsection}{\numberline {2.1.4}Siamese Networks and Pairwise Metric Learning}{7}{subsection.2.1.4}%
+\contentsline {subsection}{\numberline {2.1.5}Explainability in Movement Assessment}{8}{subsection.2.1.5}%
+\contentsline {section}{\numberline {2.2}Review of Related Work}{8}{section.2.2}%
+\contentsline {subsection}{\numberline {2.2.1}Traditional Movement Assessment}{8}{subsection.2.2.1}%
+\contentsline {subsection}{\numberline {2.2.2}The Pioneer Deep Learning Framework (Liao et al.)}{9}{subsection.2.2.2}%
+\contentsline {subsection}{\numberline {2.2.3}Contemporary GCN and Transformer Models}{9}{subsection.2.2.3}%
+\contentsline {subsection}{\numberline {2.2.4}Video-Based and Smartphone Telerehabilitation}{9}{subsection.2.2.4}%
+\contentsline {section}{\numberline {2.3}Critical Synthesis and Research Gaps}{9}{section.2.3}%
+\contentsline {chapter}{\numberline {3}Application Requirements and System Architecture}{11}{chapter.3}%
+\contentsline {section}{\numberline {3.1}System Scope and Problem Definition}{11}{section.3.1}%
+\contentsline {section}{\numberline {3.2}System Requirements}{11}{section.3.2}%
+\contentsline {subsection}{\numberline {3.2.1}Functional Requirements}{11}{subsection.3.2.1}%
+\contentsline {subsection}{\numberline {3.2.2}Non-Functional Requirements}{12}{subsection.3.2.2}%
+\contentsline {section}{\numberline {3.3}Architectural Overview}{15}{section.3.3}%
+\contentsline {subsection}{\numberline {3.3.1}Model and Inference Design}{16}{subsection.3.3.1}%
+\contentsline {subsection}{\numberline {3.3.2}Data Flow and Artifact Specification}{17}{subsection.3.3.2}%
+\contentsline {subsection}{\numberline {3.3.3}Analytics and Reporting Layer}{17}{subsection.3.3.3}%
+\contentsline {section}{\numberline {3.4}Software Design Patterns}{17}{section.3.4}%
+\contentsline {subsection}{\numberline {3.4.1}Factory and Singleton Cache Patterns}{17}{subsection.3.4.1}%
+\contentsline {subsection}{\numberline {3.4.2}Composition and Component Isolation}{18}{subsection.3.4.2}%
+\contentsline {chapter}{\numberline {4}Training Design and Software Implementation}{19}{chapter.4}%
+\contentsline {section}{\numberline {4.1}Model Training Strategy}{19}{section.4.1}%
+\contentsline {subsection}{\numberline {4.1.1}Spatio-Temporal Graph Attention Network Architecture}{21}{subsection.4.1.1}%
+\contentsline {subsection}{\numberline {4.1.2}Mathematical Formulation of the Contrastive Objective}{22}{subsection.4.1.2}%
+\contentsline {section}{\numberline {4.2}Data Processing and Normalization}{23}{section.4.2}%
+\contentsline {subsection}{\numberline {4.2.1}Identity Leakage Mitigation}{23}{subsection.4.2.1}%
+\contentsline {subsection}{\numberline {4.2.2}Kinematic Feature Engineering and 12-Channel Representation}{24}{subsection.4.2.2}%
+\contentsline {subsection}{\numberline {4.2.3}Phase-Aware Variant and Auxiliary Multi-Task Learning}{25}{subsection.4.2.3}%
+\contentsline {subsection}{\numberline {4.2.4}Temporal Interpolation and Spatial Anchoring}{26}{subsection.4.2.4}%
+\contentsline {section}{\numberline {4.3}Pipeline Implementation}{28}{section.4.3}%
+\contentsline {subsection}{\numberline {4.3.1}Video-Based Inference via MediaPipe}{28}{subsection.4.3.1}%
+\contentsline {subsection}{\numberline {4.3.2}Feedback Visualization}{28}{subsection.4.3.2}%
+\contentsline {section}{\numberline {4.4}Application Integration}{29}{section.4.4}%
+\contentsline {subsection}{\numberline {4.4.1}Web Interface and Request Orchestration}{29}{subsection.4.4.1}%
+\contentsline {subsection}{\numberline {4.4.2}Data Model and Persistence (Entity Framework Core)}{30}{subsection.4.4.2}%
+\contentsline {subsection}{\numberline {4.4.3}Authentication and MVC Architecture}{33}{subsection.4.4.3}%
+\contentsline {subsection}{\numberline {4.4.4}Error Handling and Robustness}{35}{subsection.4.4.4}%
+\contentsline {chapter}{\numberline {5}Experiments and Results}{36}{chapter.5}%
+\contentsline {section}{\numberline {5.1}Experimental Setup and Protocol}{36}{section.5.1}%
+\contentsline {subsection}{\numberline {5.1.1}Dataset Characteristics}{36}{subsection.5.1.1}%
+\contentsline {section}{\numberline {5.2}Quantitative Analysis}{38}{section.5.2}%
+\contentsline {section}{\numberline {5.3}Quantitative Analysis}{41}{section.5.3}%
+\contentsline {subsection}{\numberline {5.3.1}Stream Importance and Ablation Studies}{43}{subsection.5.3.1}%
+\contentsline {section}{\numberline {5.4}Qualitative Analysis}{44}{section.5.4}%
+\contentsline {subsection}{\numberline {5.4.1}End-to-End Clinical Feedback Walkthrough}{45}{subsection.5.4.1}%
+\contentsline {subsection}{\numberline {5.4.2}Longitudinal Patient Tracking and Analytics}{48}{subsection.5.4.2}%
+\contentsline {section}{\numberline {5.5}Generalization Challenges and Limitations}{49}{section.5.5}%
+\contentsline {subsection}{\numberline {5.5.1}Error Analysis and Known Failure Modes}{50}{subsection.5.5.1}%
+\contentsline {chapter}{\numberline {6}Conclusions and Future Directions}{51}{chapter.6}%
+\contentsline {section}{\numberline {6.1}Thesis Contributions Summary}{51}{section.6.1}%
+\contentsline {section}{\numberline {6.2}Key Empirical Findings}{52}{section.6.2}%
+\contentsline {section}{\numberline {6.3}Limitations and Honest Assessment}{52}{section.6.3}%
+\contentsline {section}{\numberline {6.4}Future Research Directions}{53}{section.6.4}%
+\contentsline {section}{\numberline {6.5}Concluding Remarks}{53}{section.6.5}%
+\contentsline {chapter}{Bibliography}{54}{chapter*.41}%

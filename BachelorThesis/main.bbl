@@ -1,0 +1,111 @@
+\newcommand{\etalchar}[1]{$^{#1}$}
+\begin{thebibliography}{AGM{\etalchar{+}}18}
+
+\bibitem[ADC18]{argent2018patient}
+Rob Argent, Ailish Daly, and Brian Caulfield.
+\newblock Patient involvement with home-based exercise programs: can connected
+  health interventions influence adherence?
+\newblock {\em JMIR mHealth and uHealth}, 6(3):e47, 2018.
+
+\bibitem[AGM{\etalchar{+}}18]{AGM+18}
+Julius Adebayo, Justin Gilmer, Michael Muelly, Ian Goodfellow, Moritz Hardt,
+  and Been Kim.
+\newblock Sanity checks for saliency maps.
+\newblock In {\em Advances in Neural Information Processing Systems (NeurIPS)},
+  volume~31, 2018.
+
+\bibitem[BGL{\etalchar{+}}93]{BGL+93}
+Jane Bromley, Isabelle Guyon, Yann LeCun, Eduard S{\"a}ckinger, and Roopak
+  Shah.
+\newblock Signature verification using a {"S}iamese time delay neural network.
+\newblock In {\em Advances in Neural Information Processing Systems (NeurIPS)},
+  volume~6, 1993.
+
+\bibitem[BGR{\etalchar{+}}20]{BGR+20}
+Valentin Bazarevsky, Ivan Grishchenko, Karthik Raveendran, Tyler Zhu, Fan
+  Zhang, and Matthias Grundmann.
+\newblock Blazepose: On-device real-time body pose tracking, 2020.
+
+\bibitem[CBS25]{CBS25}
+Amanpreet Chander, Deepti~R. Bathula, and Ashish Sahani.
+\newblock Towards an rgb camera-based rehabilitation exercise assessment using
+  an enhanced spatio-temporal transformer framework.
+\newblock {\em Multimedia Tools and Applications}, 84(40):48283--48307, 2025.
+
+\bibitem[CSWS17]{CSWS17}
+Zhe Cao, Tomas Simon, Shih-En Wei, and Yaser Sheikh.
+\newblock Realtime multi-person 2d pose estimation using part affinity fields.
+\newblock In {\em Proceedings of the IEEE Conference on Computer Vision and
+  Pattern Recognition (CVPR)}, pages 7291--7299, 2017.
+
+\bibitem[CXJS22]{CXJS22}
+Shuo Chen, Ke~Xu, Xinghao Jiang, and Tanfeng Sun.
+\newblock Pyramid spatial-temporal graph transformer for skeleton-based action
+  recognition.
+\newblock {\em Applied Sciences}, 12(18):9229, 2022.
+
+\bibitem[GYDD18]{GYDD18}
+Pallabi Ghosh, Yi~Yao, Larry~S. Davis, and Ajay Divakaran.
+\newblock Stacked spatio-temporal graph convolutional networks for action
+  segmentation, 2018.
+
+\bibitem[HCL06]{HCL06}
+Raia Hadsell, Sumit Chopra, and Yann LeCun.
+\newblock Dimensionality reduction by learning an invariant mapping.
+\newblock In {\em Proceedings of the IEEE Conference on Computer Vision and
+  Pattern Recognition (CVPR)}, pages 1735--1742, 2006.
+
+\bibitem[JW19]{JW19}
+Sarthak Jain and Byron~C. Wallace.
+\newblock Attention is not explanation.
+\newblock In {\em Proceedings of the 2019 Conference of the North American
+  Chapter of the Association for Computational Linguistics: Human Language
+  Technologies (NAACL-HLT)}, pages 3543--3556, 2019.
+
+\bibitem[KZS15]{KZS15}
+Gregory Koch, Richard Zemel, and Ruslan Salakhutdinov.
+\newblock Siamese neural networks for one-shot image recognition.
+\newblock In {\em ICML Deep Learning Workshop}, 2015.
+
+\bibitem[LTN{\etalchar{+}}19]{LTN+19}
+Camillo Lugaresi, Jiuqiang Tang, Hadon Nash, Chris McClanahan, Esha Uboweja,
+  Michael Hays, Fan Yang, Zhiyuan Zhang, Chuo-Ling Chang, Ming Yong, Juhyun
+  Lee, Wan-Teh Chang, Wei Hua, Matthias Georg, Maniam Kammel, David Shearer,
+  Karen Wang, Mingze Wang, Oscar Ramirez, Jeff Weiss, Vinit Jain, et~al.
+\newblock Mediapipe: A framework for building perception pipelines, 2019.
+
+\bibitem[LVX20]{LVX20}
+Yalin Liao, Aleksandar Vakanski, and Min Xian.
+\newblock A deep learning framework for assessing physical rehabilitation
+  exercises.
+\newblock {\em IEEE Transactions on Neural Systems and Rehabilitation
+  Engineering}, 28(2):468--477, 2020.
+
+\bibitem[Rud19]{Rud19}
+Cynthia Rudin.
+\newblock Stop explaining black box machine learning models for high stakes
+  decisions and use interpretable models instead.
+\newblock {\em Nature Machine Intelligence}, 1(5):206--215, 2019.
+
+\bibitem[VpJPB18]{VJPB18}
+Aleksandar Vakanski, Hyung pil Jun, David Paul, and Russell Baker.
+\newblock A data set of human body movements for physical rehabilitation
+  exercises.
+\newblock {\em Data}, 3(1):2, 2018.
+
+\bibitem[YLCC24]{yu2024egcn}
+Bruce~X.B. Yu, Yan Liu, Keith~C.C. Chan, and Chang~Wen Chen.
+\newblock Egcn++: A new fusion strategy for ensemble learning in skeleton-based
+  rehabilitation exercise assessment.
+\newblock {\em IEEE Transactions on Pattern Analysis and Machine Intelligence},
+  46(9):6471--6485, 2024.
+
+\bibitem[ZGAA25]{ZGAA25}
+Moamen Zaher, Amr~S. Ghoneim, Laila Abdelhamid, and Ayman Atia.
+\newblock Rehabilitation monitoring and assessment: a comparative analysis of
+  feature engineering and machine learning algorithms on the ui-prmd and kimore
+  benchmark datasets.
+\newblock {\em Sports Engineering}, 28(1):382--402, 2025.
+\newblock Published online 04 Feb 2025.
+
+\end{thebibliography}
