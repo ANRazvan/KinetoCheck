@@ -266,9 +266,9 @@ INPUT D:\Users\alexe\AppData\Local\Programs\MiKTeX\fonts\tfm\public\amsfonts\sym
 INPUT D:\Users\alexe\AppData\Local\Programs\MiKTeX\fonts\tfm\public\amsfonts\symbols\msbm7.tfm
 INPUT D:\Users\alexe\AppData\Local\Programs\MiKTeX\fonts\vf\adobe\palatino\pplb7t.vf
 INPUT D:\Users\alexe\AppData\Local\Programs\MiKTeX\fonts\tfm\adobe\palatino\pplb8r.tfm
+OUTPUT main.toc
 INPUT D:\Users\alexe\AppData\Local\Programs\MiKTeX\fonts\vf\adobe\palatino\pplro7t.vf
 INPUT D:\Users\alexe\AppData\Local\Programs\MiKTeX\fonts\tfm\adobe\palatino\pplro8r.tfm
-OUTPUT main.toc
 INPUT .\chapters\chapter1_introduction.tex
 INPUT .\chapters\chapter1_introduction.tex
 INPUT .\chapters\chapter1_introduction.tex

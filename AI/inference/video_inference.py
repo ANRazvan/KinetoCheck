@@ -50,7 +50,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--checkpoints-root",
         type=Path,
-        default=Path("checkpoints") / "uiprmd",
+        default=Path("checkpoints") / "uiprmd_phase_aware",
         help="Directory containing exercise_XX checkpoint folders",
     )
     parser.add_argument(
